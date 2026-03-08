@@ -34,7 +34,7 @@ flowchart TB
         WSServer["WebSocket Server<br/>(Port 4399)"]
     end
 
-    subgraph OpenXiaoAI["🧠 open-xiaoai Server<br/>examples/bridge/"]
+    subgraph OpenXiaoAI["🧠 Open-XiaoAI Bridge<br/>独立仓库"]
         subgraph CoreServices["核心服务"]
             MainApp["MainApp<br/>主控制器"]
             EventMgr["EventManager<br/>事件总线"]
@@ -146,16 +146,16 @@ flowchart TB
 ## 快速开始
 
 > [!NOTE]
-> 继续下面的操作之前，你需要先在小爱音箱上启动运行 Rust 补丁程序 [👉 教程](../../packages/client-rust/README.md)
+> 继续下面的操作之前，你需要先在小爱音箱上启动运行 Rust 补丁程序 [👉 教程](https://github.com/coderzc/open-xiaoai/blob/main/packages/client-rust/README.md)
 
 首先，克隆仓库代码到本地。
 
 ```shell
 # 克隆代码
-git clone https://github.com/idootop/open-xiaoai.git
+git clone https://github.com/coderzc/open-xiaoai-bridge.git
 
 # 进入当前项目目录
-cd examples/bridge
+cd open-xiaoai-bridge
 ```
 
 然后把 `config.py` 文件里的配置修改成你自己的。
@@ -473,7 +473,7 @@ PS：如果还是不行，建议更换其他更易识别的唤醒词。
 
 #### Q: 我想自己编译运行，模型文件在哪里下载？
 
-由于 ASR 相关模型文件体积较大，并未直接提交在 git 仓库中，你可以在 release 中下载 [VAD + KWS 相关模型](https://github.com/idootop/open-xiaoai/releases/tag/vad-kws-models)，然后解压到 `core/models` 路径下即可。
+由于 ASR 相关模型文件体积较大，并未直接提交在 git 仓库中，你可以在 Open-XiaoAI release 中下载 [VAD + KWS 相关模型](https://github.com/coderzc/open-xiaoai/releases/tag/vad-kws-models)，然后解压到 `core/models` 路径下即可。
 
 ### API Server 相关
 
