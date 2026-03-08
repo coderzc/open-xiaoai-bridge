@@ -11,9 +11,9 @@ The main application flow is managed by main.py.
 import asyncio
 import json
 
-from xiaozhi.services.protocols.protocol import Protocol
-from xiaozhi.utils.config import ConfigManager
-from xiaozhi.utils.logger import logger
+from core.services.protocols.protocol import Protocol
+from core.utils.config import ConfigManager
+from core.utils.logger import logger
 
 
 class XiaoZhi:
@@ -65,7 +65,7 @@ class XiaoZhi:
 
     async def connect(self):
         """Connect to XiaoZhi server."""
-        from xiaozhi.services.protocols.websocket_protocol import WebsocketProtocol
+        from core.services.protocols.websocket_protocol import WebsocketProtocol
 
         self.protocol = WebsocketProtocol()
 

@@ -5,14 +5,14 @@ import threading
 import time
 
 from config import APP_CONFIG
-from xiaozhi.event import EventManager
-from xiaozhi.ref import get_speaker, get_xiaoai, get_xiaozhi, set_kws
-from xiaozhi.services.audio.kws.sherpa import SherpaOnnx
-from xiaozhi.services.audio.stream import MyAudio
-from xiaozhi.services.audio.vad.silero import Silero
-from xiaozhi.services.protocols.typing import AudioConfig, DeviceState
-from xiaozhi.utils.base import get_env
-from xiaozhi.utils.logger import logger
+from core.event import EventManager
+from core.ref import get_speaker, get_xiaoai, get_xiaozhi, set_kws
+from core.services.audio.kws.sherpa import SherpaOnnx
+from core.services.audio.stream import MyAudio
+from core.services.audio.vad.silero import Silero
+from core.services.protocols.typing import AudioConfig, DeviceState
+from core.utils.base import get_env
+from core.utils.logger import logger
 
 
 class _KWS:

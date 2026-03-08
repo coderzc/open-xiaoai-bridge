@@ -1,6 +1,6 @@
 import json
 
-from xiaozhi.services.protocols.typing import ListeningMode
+from core.services.protocols.typing import ListeningMode
 
 
 class Protocol:

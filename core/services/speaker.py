@@ -1,7 +1,7 @@
 from typing import Literal
 
-from xiaozhi.ref import get_xiaoai, set_speaker
-from xiaozhi.utils.base import json_decode, json_encode
+from core.ref import get_xiaoai, set_speaker
+from core.utils.base import json_decode, json_encode
 
 
 class CommandResult:

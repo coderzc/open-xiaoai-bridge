@@ -7,7 +7,7 @@ from typing import Any, Optional
 import requests
 
 from config import APP_CONFIG
-from xiaozhi.utils.file import read_file, write_file
+from core.utils.file import read_file, write_file
 
 
 class ConfigManager:

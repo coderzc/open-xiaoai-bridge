@@ -4,8 +4,8 @@ import signal
 import sys
 import time
 
-from xiaozhi.app import MainApp
-from xiaozhi.utils.logger import logger
+from core.app import MainApp
+from core.utils.logger import logger
 
 
 main_app_instance = None

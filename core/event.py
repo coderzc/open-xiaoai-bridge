@@ -1,8 +1,8 @@
 import asyncio
 
 from config import APP_CONFIG
-from xiaozhi.utils.logger import logger
-from xiaozhi.ref import (
+from core.utils.logger import logger
+from core.ref import (
     get_app,
     get_audio_codec,
     get_kws,
@@ -12,8 +12,8 @@ from xiaozhi.ref import (
     get_xiaozhi,
     set_speech_frames,
 )
-from xiaozhi.services.protocols.typing import AbortReason, DeviceState, ListeningMode
-from xiaozhi.utils.base import get_env
+from core.services.protocols.typing import AbortReason, DeviceState, ListeningMode
+from core.utils.base import get_env
 
 
 class Step:

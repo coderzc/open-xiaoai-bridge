@@ -1,14 +1,14 @@
 import opuslib_next as opuslib
 
-from xiaozhi.ref import (
+from core.ref import (
     get_speech_frames,
     get_xiaozhi,
     set_audio_codec,
     set_speech_frames,
 )
-from xiaozhi.services.audio.stream import MyAudio
-from xiaozhi.services.protocols.typing import AudioConfig
-from xiaozhi.utils.base import get_env
+from core.services.audio.stream import MyAudio
+from core.services.protocols.typing import AudioConfig
+from core.utils.base import get_env
 
 
 class AudioCodec:

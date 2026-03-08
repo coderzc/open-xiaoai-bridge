@@ -19,7 +19,7 @@ Configuration (priority: env vars > config file > defaults):
         export OPENCLAW_SESSION_KEY=main
 
 Usage:
-    from xiaozhi.openclaw import OpenClawManager
+    from core.openclaw import OpenClawManager
     await OpenClawManager.send_message("Hello OpenClaw")
 """
 
@@ -29,8 +29,8 @@ import uuid
 
 import websockets
 
-from xiaozhi.utils.base import get_env
-from xiaozhi.utils.logger import logger
+from core.utils.base import get_env
+from core.utils.logger import logger
 
 
 class OpenClawManager:

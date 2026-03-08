@@ -12,21 +12,21 @@ import json
 import threading
 import time
 
-from xiaozhi.xiaozhi import XiaoZhi
-from xiaozhi.xiaoai import XiaoAI
-from xiaozhi.event import EventManager
-from xiaozhi.ref import set_xiaozhi, set_app
-from xiaozhi.services.audio.kws import KWS
-from xiaozhi.services.audio.vad import VAD
-from xiaozhi.utils.config import ConfigManager
-from xiaozhi.utils.logger import logger
-from xiaozhi.services.protocols.typing import (
+from core.xiaozhi import XiaoZhi
+from core.xiaoai import XiaoAI
+from core.event import EventManager
+from core.ref import set_xiaozhi, set_app
+from core.services.audio.kws import KWS
+from core.services.audio.vad import VAD
+from core.utils.config import ConfigManager
+from core.utils.logger import logger
+from core.services.protocols.typing import (
     AbortReason,
     DeviceState,
     EventType,
 )
-from xiaozhi.openclaw import OpenClawManager
-from xiaozhi.services.api_server import APIServer
+from core.openclaw import OpenClawManager
+from core.services.api_server import APIServer
 
 
 class MainApp:
@@ -175,7 +175,7 @@ class MainApp:
         if not self._enable_xiaozhi:
             return
         try:
-            from xiaozhi.services.audio.codec import AudioCodec
+            from core.services.audio.codec import AudioCodec
 
             self.audio_codec = AudioCodec()
             if self.xiaozhi:
@@ -372,7 +372,7 @@ class MainApp:
             self.xiaozhi.send_abort_speaking(AbortReason.ABORT),
             self.loop,
         )
-        from xiaozhi.services.protocols.typing import ListeningMode
+        from core.services.protocols.typing import ListeningMode
         asyncio.run_coroutine_threadsafe(
             self.xiaozhi.send_start_listening(ListeningMode.MANUAL), self.loop
         )

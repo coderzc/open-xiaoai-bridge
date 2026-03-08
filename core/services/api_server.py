@@ -9,9 +9,9 @@ import io
 import numpy as np
 import soundfile as sf
 from aiohttp import web
-from xiaozhi.ref import get_speaker, get_xiaoai
-from xiaozhi.utils.logger import logger
-from xiaozhi.services.tts.doubao import DoubaoTTS
+from core.ref import get_speaker, get_xiaoai
+from core.utils.logger import logger
+from core.services.tts.doubao import DoubaoTTS
 
 
 def decode_audio_to_pcm(audio_data: bytes, filename: str, target_sample_rate: int = 24000) -> bytes:

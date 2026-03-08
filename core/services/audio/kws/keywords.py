@@ -18,7 +18,7 @@ def init_project_context():
 init_project_context()
 
 from config import APP_CONFIG
-from xiaozhi.utils.file import get_model_file_path
+from core.utils.file import get_model_file_path
 
 
 def get_args():

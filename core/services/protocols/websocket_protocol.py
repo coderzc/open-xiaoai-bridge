@@ -3,11 +3,11 @@ import json
 
 import websockets
 
-from xiaozhi.ref import get_xiaozhi
-from xiaozhi.services.protocols.protocol import Protocol
-from xiaozhi.services.protocols.typing import DeviceState
-from xiaozhi.utils.config import ConfigManager
-from xiaozhi.utils.logger import logger
+from core.ref import get_xiaozhi
+from core.services.protocols.protocol import Protocol
+from core.services.protocols.typing import DeviceState
+from core.utils.config import ConfigManager
+from core.utils.logger import logger
 
 
 class WebsocketProtocol(Protocol):

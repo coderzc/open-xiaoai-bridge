@@ -2,13 +2,13 @@ import threading
 import time
 
 from config import APP_CONFIG
-from xiaozhi.event import EventManager
-from xiaozhi.ref import set_vad
-from xiaozhi.services.audio.stream import MyAudio
-from xiaozhi.services.audio.vad.silero import Silero
-from xiaozhi.services.protocols.typing import AudioConfig
-from xiaozhi.utils.base import get_env
-from xiaozhi.utils.logger import logger
+from core.event import EventManager
+from core.ref import set_vad
+from core.services.audio.stream import MyAudio
+from core.services.audio.vad.silero import Silero
+from core.services.protocols.typing import AudioConfig
+from core.utils.base import get_env
+from core.utils.logger import logger
 
 
 class _VAD:

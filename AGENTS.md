@@ -10,7 +10,7 @@ open-xiaoai/
 ├── examples/bridge/           # AI Bridge：小爱 + 小智 AI + OpenClaw
 │   ├── main.py               # 程序入口
 │   ├── config.py             # 用户配置文件（唤醒词、TTS、OpenClaw 等）
-│   └── xiaozhi/              # 核心源码
+│   └── core/                 # 核心源码（原 xiaozhi/）
 │       ├── app.py            # MainApp: 应用主控制器
 │       ├── xiaoai.py         # XiaoAI: 小爱音箱接口（事件、TTS、控制）
 │       ├── xiaozhi.py        # XiaoZhi: 小智 AI WebSocket 协议
@@ -122,12 +122,12 @@ APP_CONFIG = {
 
 ### 添加新功能
 1. 在 `config.py` 中添加配置项
-2. 在 `xiaozhi/` 下创建模块
+2. 在 `core/` 下创建模块
 3. 在 `MainApp` 中初始化管理
 4. 通过 `ref.py` 注册全局访问点
 
 ### 调试技巧
-- 日志使用 `xiaozhi.utils.logger.logger`
+- 日志使用 `core.utils.logger.logger`
 - 设置环境变量 `DEBUG=1` 开启详细日志
 - API Server 提供 `/api/health` 健康检查端点
 

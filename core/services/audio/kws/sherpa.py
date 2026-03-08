@@ -1,7 +1,7 @@
 import numpy as np
 import sherpa_onnx
 
-from xiaozhi.utils.file import get_model_file_path
+from core.utils.file import get_model_file_path
 
 
 class _SherpaOnnx:

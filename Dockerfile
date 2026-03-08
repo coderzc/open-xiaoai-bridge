@@ -51,7 +51,7 @@ ENV CLI=true
 COPY --from=builder /app/.venv /app/.venv
 COPY examples/bridge/main.py .
 COPY examples/bridge/config.py .
-COPY examples/bridge/xiaozhi ./xiaozhi
+COPY examples/bridge/core ./core
 
 
 # Ensure sherpa_onnx can locate onnxruntime shared library at runtime.
@@ -67,4 +67,4 @@ ENV LD_LIBRARY_PATH=/app/.venv/lib/python3.12/site-packages/onnxruntime/capi
 EXPOSE 9092
 
 # 先初始化关键词模型，然后启动主程序
-CMD ["/bin/bash", "-c", "source /app/.venv/bin/activate && python xiaozhi/services/audio/kws/keywords.py && python main.py"]
+CMD ["/bin/bash", "-c", "source /app/.venv/bin/activate && python core/services/audio/kws/keywords.py && python main.py"]

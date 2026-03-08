@@ -6,12 +6,12 @@ import numpy as np
 import open_xiaoai_server
 
 from config import APP_CONFIG
-from xiaozhi.event import EventManager
-from xiaozhi.ref import get_speaker, set_xiaoai
-from xiaozhi.services.audio.stream import GlobalStream
-from xiaozhi.services.speaker import SpeakerManager
-from xiaozhi.utils.base import json_decode
-from xiaozhi.utils.logger import logger
+from core.event import EventManager
+from core.ref import get_speaker, set_xiaoai
+from core.services.audio.stream import GlobalStream
+from core.services.speaker import SpeakerManager
+from core.utils.base import json_decode
+from core.utils.logger import logger
 
 ASCII_BANNER = """
 ▄▖      ▖▖▘    ▄▖▄▖
