@@ -1,0 +1,15 @@
+/Users/zc/projects/open-xiaoai/packages/client-rust/target/release/deps/thiserror-311fb4eb497a8a31.d: /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/lib.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/aserror.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/display.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/provide.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/var.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/private.rs /Users/zc/projects/open-xiaoai/packages/client-rust/target/release/build/thiserror-88f166b005dfe2a1/out/private.rs
+
+/Users/zc/projects/open-xiaoai/packages/client-rust/target/release/deps/libthiserror-311fb4eb497a8a31.rlib: /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/lib.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/aserror.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/display.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/provide.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/var.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/private.rs /Users/zc/projects/open-xiaoai/packages/client-rust/target/release/build/thiserror-88f166b005dfe2a1/out/private.rs
+
+/Users/zc/projects/open-xiaoai/packages/client-rust/target/release/deps/libthiserror-311fb4eb497a8a31.rmeta: /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/lib.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/aserror.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/display.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/provide.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/var.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/private.rs /Users/zc/projects/open-xiaoai/packages/client-rust/target/release/build/thiserror-88f166b005dfe2a1/out/private.rs
+
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/lib.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/aserror.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/display.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/provide.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/var.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.17/src/private.rs:
+/Users/zc/projects/open-xiaoai/packages/client-rust/target/release/build/thiserror-88f166b005dfe2a1/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/zc/projects/open-xiaoai/packages/client-rust/target/release/build/thiserror-88f166b005dfe2a1/out

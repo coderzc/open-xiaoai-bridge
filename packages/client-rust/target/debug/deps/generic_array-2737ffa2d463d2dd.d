@@ -1,0 +1,11 @@
+/Users/zc/projects/open-xiaoai/packages/client-rust/target/debug/deps/generic_array-2737ffa2d463d2dd.d: /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/lib.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/hex.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/impls.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/arr.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/functional.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/iter.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/sequence.rs
+
+/Users/zc/projects/open-xiaoai/packages/client-rust/target/debug/deps/libgeneric_array-2737ffa2d463d2dd.rmeta: /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/lib.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/hex.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/impls.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/arr.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/functional.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/iter.rs /Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/sequence.rs
+
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/lib.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/hex.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/impls.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/arr.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/functional.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/iter.rs:
+/Users/zc/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generic-array-0.14.8/src/sequence.rs:

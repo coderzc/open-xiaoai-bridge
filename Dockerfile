@@ -23,12 +23,10 @@ RUN echo '[ -s "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"' >> "$BASH_ENV"
 WORKDIR /app
 
 # 复制项目文件
-COPY examples/bridge .
-COPY packages/client-rust ./client-rust
+COPY . .
 
 # 构建
-RUN sed -i 's/\.\.\/\.\.\/packages\///g' Cargo.toml \
-    && cargo build --release
+RUN cargo build --release
 
 # 安装锁定依赖（保持 pyproject.toml 与 uv.lock 一致）
 RUN uv sync --locked --no-install-project --no-editable
@@ -49,9 +47,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV CLI=true
 
 COPY --from=builder /app/.venv /app/.venv
-COPY examples/bridge/main.py .
-COPY examples/bridge/config.py .
-COPY examples/bridge/core ./core
+COPY main.py .
+COPY config.py .
+COPY core ./core
 
 
 # Ensure sherpa_onnx can locate onnxruntime shared library at runtime.
