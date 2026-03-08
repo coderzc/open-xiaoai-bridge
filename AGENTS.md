@@ -10,7 +10,11 @@ open-xiaoai/
 ├── examples/bridge/           # AI Bridge：小爱 + 小智 AI + OpenClaw
 │   ├── main.py               # 程序入口
 │   ├── config.py             # 用户配置文件（唤醒词、TTS、OpenClaw 等）
-│   └── core/                 # 核心源码（原 xiaozhi/）
+│   ├── src/                  # Rust 扩展源码（maturin 编译）
+│   │   ├── lib.rs            # Rust Python 扩展入口
+│   │   ├── server.rs         # 音频服务实现
+│   │   └── python.rs         # PyO3 Python 绑定
+│   └── core/                 # Python 核心源码（原 xiaozhi/）
 │       ├── app.py            # MainApp: 应用主控制器
 │       ├── xiaoai.py         # XiaoAI: 小爱音箱接口（事件、TTS、控制）
 │       ├── xiaozhi.py        # XiaoZhi: 小智 AI WebSocket 协议
@@ -76,6 +80,14 @@ OpenClaw 网关客户端：
 - `EventManager.wakeup()`: 触发唤醒流程
 - `before_wakeup`: 唤醒前回调（在 config.py 中配置）
 - `after_wakeup`: 唤醒后回调
+
+### 7. Rust 扩展 (src/)
+通过 [maturin](https://www.maturin.rs/) 编译的 Rust Python 扩展，提供高性能底层服务：
+- `lib.rs`: 扩展入口，使用 PyO3 绑定
+- `server.rs`: WebSocket 音频服务器（端口 4399）
+- `python.rs`: Python API 暴露（`open_xiaoai_server` 模块）
+
+**编译产物**: `open_xiaoai_server` Python 模块，供 `main.py` 调用
 
 ## 配置说明 (config.py)
 
