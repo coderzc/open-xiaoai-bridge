@@ -167,7 +167,7 @@ TTS服务参数具体如下：
 | | | | | | \
 |namespace |请求方法 | |string |BidirectionalTTS |
 | | | | | | \
-|req_params.text |required，输入文本（双向流式目前不支持ssml） |√ |string | |
+|req_params.text |required，输入文本（双向流式当前已支持ssml） |√ |string | |
 | | | | | | \
 |req_params.model |\
 | |模型版本，传`seed-tts-1.1`较默认版本音质有提升，并且延时更优，不传为默认效果。 |\
@@ -309,6 +309,21 @@ TTS服务参数具体如下：
 | |* id 西欧语种采用印尼 |\
 | |* es 西欧语种采用墨西 |\
 | |* pt 西欧语种采用巴葡 | |string | |
+| | | | | | \
+|req_params.additions.explicit_dialect |\
+|（明确方言） |\
+| |明确方言，目前仅`zh_female_vv_uranus_bigtts`音色支持以下三种方言： |\
+| | |\
+| |* dongbei（东北话） |\
+| |* shaanxi（陕西话） |\
+| |* sichuan（四川话） |\
+| | |\
+| |参数情况举例说明： |\
+| | |\
+| |1. speaker_id = `zh_female_xiaohe_uranus_bigtts`，explicit_language不传，explicit_dialect=dongbei，则报参数错误，即语种和方言不对应 |\
+| |2. speaker_id =`zh_female_vv_uranus_bigtts`，explicit_language不传，explicit_dialect=dongbei，则正常完成东北方言的合成 |\
+| |3. speaker_id = `zh_female_vv_uranus_bigtts`，explicit_language=ja，explicit_dialect=dongbei，则报参数错误，即语种和方言不对应 |\
+| |4. speaker_id = `zh_female_vv_uranus_bigtts`，explicit_language=ja，explicit_dialect不传，则按照语种正常合成 | |string | |
 | | | | | | \
 |req_params.additions.unsupported_char_ratio_thresh |默认: 0.3，最大值: 1.0 |\
 | |检测出不支持合成的文本超过设置的比例，则会返回错误。 | |float |0.3 |
