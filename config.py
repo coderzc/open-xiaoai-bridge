@@ -26,9 +26,9 @@ async def before_wakeup(speaker, text, source, xiaozhi, xiaoai, app):
             # 打断原来的小爱同学回复
             await speaker.abort_xiaoai()
 
-            # 在消息末尾加入提示，引导 Agent 调用 xiaoai-tts skill 播报结果
-            # 可根据自己的使用场景适当调整提示内容
-            forwarded_text = text + "\n\n注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字，选一个适合的音色调用 xiaoai-tts skill 将结果播报出来"
+            forwarded_text = text + "\n注意：将结果处理成纯文字版， 不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内"
+            # 如果想让 Agent 自主调用 TTS 播报结果，可在消息末尾加入提示，引导 Agent 调用 xiaoai-tts skill 播报结果, 可根据自己的使用场景适当调整提示内容
+            # forwarded_text = text + "\n\n注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字，选一个适合的音色调用 xiaoai-tts skill 将结果播报出来"
 
             success = await app.send_to_openclaw(forwarded_text)
             if not success:
@@ -104,13 +104,11 @@ APP_CONFIG = {
         "token": "your_openclaw_token",  # OpenClaw 认证令牌
         "session_key": "main:open-xiaoai-bridge", # 会话标识
         "identity_path": "/app/openclaw/identity/device.json",  # 设备身份文件路径；容器部署时建议挂载持久化目录
-        # 推荐做法：将 tts_enabled 设为 False，在 OpenClaw 中注册 skills/xiaoai-tts skill，
-        # 由 Agent 自主调用，可灵活控制音色、语速、情感等参数
-        # 如果不想在 OpenClaw 中注册 skill，也可以将 tts_enabled 设为 True，
-        # 由服务端自动合成语音，但灵活性不如 Agent 主动调用
-        "tts_enabled": False,  # 是否由服务端自动 TTS 播报 OpenClaw 回复
+        # tts_enabled = True:  服务端自动播放回复，稳定性好、响应快，但只能使用固定音色和语速
+        # tts_enabled = False: 由 Agent 主动调用 skills/xiaoai-tts，可灵活控制音色、语速、情感等，但稳定性和响应速度较差
+        "tts_enabled": True,  # 是否由服务端自动 TTS 播报 OpenClaw 回复
         "tts_speed": 1.0,  # TTS 语速 (0.5-2.0, 1.0 为正常语速)
-        "tts_speaker": "zh_female_cancan_mars_bigtts",  # 可选：自定义音色，不设置则使用 tts.doubao.default_speaker
+        "tts_speaker": "zh_female_vv_uranus_bigtts",  # 可选：自定义音色，不设置则使用 tts.doubao.default_speaker
         "response_timeout": 120,  # 等待 OpenClaw agent 响应的超时时间（秒）
     },
 }

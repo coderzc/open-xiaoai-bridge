@@ -274,8 +274,22 @@ curl -X POST http://localhost:9092/api/interrupt
 支持通过 [OpenClaw](../openclaw/README.md) 将消息转发到外部 AI Agent 服务。
 
 OpenClaw 收到消息后，可以通过两种方式回复语音：
-- **推荐：Agent 主动调用 `skills/xiaoai-tts`** — Agent 可自由选择音色、语速、情感等参数，灵活性更高
-- 服务端自动合成：配置 `tts_enabled: True`，由服务端调用 Doubao TTS 将 Agent 回复内容自动播报
+
+| | Agent 主动调用 `skills/xiaoai-tts` | 服务端自动播放回复（`tts_enabled: True`） |
+|---|---|---|
+| **灵活性** | 高 — Agent 可自由选择音色、语速、情感等参数 | 低 — 只能使用固定的音色、语气和语速 |
+| **稳定性** | 较差 — Agent 调用 skill 不一定每次都成功 | 好 — 由服务端直接合成，流程简单可靠 |
+| **响应速度** | 较慢 — 需要 Agent 额外处理步骤 | 快 — 服务端收到回复后立即合成播报 |
+
+两种方式对应的提示词不同，需要在 `config.py` 的 `before_wakeup` 中调整发送给 Agent 的消息内容：
+
+```python
+# 服务端自动播放回复（tts_enabled: True）— 提示 Agent 返回纯文本即可
+forwarded_text = text + "\n注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内"
+
+# Agent 主动调用 TTS（tts_enabled: False）— 提示 Agent 调用 xiaoai-tts skill 播报
+forwarded_text = text + "\n\n注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字，选一个适合的音色调用 xiaoai-tts skill 将结果播报出来"
+```
 
 ### 配置 OpenClaw
 
