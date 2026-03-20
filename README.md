@@ -230,8 +230,8 @@ curl POST /api/play/text → API Server → SpeakerManager → 小爱音箱
 1. **🔧 刷机** — 更新小爱音箱固件，开启 SSH
    - [刷机教程](https://github.com/idootop/open-xiaoai/blob/main/docs/flash.md)
 
-2. **🛠️ 安装 Client** — 在音箱上运行 Rust Client 端
-   - [安装教程](https://github.com/idootop/open-xiaoai/blob/main/packages/client-rust/README.md)
+2. **🛠️ 音箱补丁程序安装 Client** — 在音箱上运行 Rust Client 端
+   - [补丁程序安装教程](https://github.com/idootop/open-xiaoai/blob/main/packages/client-rust/README.md)
 
 ### 🐳 Docker Compose（推荐）
 

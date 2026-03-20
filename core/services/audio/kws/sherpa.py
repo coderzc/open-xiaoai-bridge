@@ -26,6 +26,10 @@ class _SherpaOnnx:
         )
         self.stream = self.keyword_spotter.create_stream()
 
+    def reset(self):
+        """Reset the stream to discard any partial recognition state."""
+        self.stream = self.keyword_spotter.create_stream()
+
     def kws(self, frames):
         # print(f"kws....., {len(frames)}")
         samples = np.frombuffer(frames, dtype=np.int16)

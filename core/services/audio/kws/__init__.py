@@ -145,6 +145,10 @@ class _KWS:
                         )
                         self.vad_active = False
                         self.vad_silence_frames = 0
+                        # Reset Sherpa stream to discard partial recognition state,
+                        # preventing leftover audio from the previous utterance
+                        # from combining with the next one.
+                        SherpaOnnx.reset()
 
     def on_message(self, text: str):
         loop = get_app().loop if get_app() else get_xiaoai().async_loop
