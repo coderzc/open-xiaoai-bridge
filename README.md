@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12+-3776ab?logo=python&logoColor=white)](https://www.python.org/) [![Rust](https://img.shields.io/badge/Rust-native_module-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![GitHub Stars](https://img.shields.io/github/stars/coderzc/open-xiaoai-bridge?style=flat&logo=github)](https://github.com/coderzc/open-xiaoai-bridge/stargazers) [![Docker Image](https://img.shields.io/badge/ghcr.io-open--xiaoai--bridge-2496ed?logo=docker&logoColor=white)](https://ghcr.io/coderzc/open-xiaoai-bridge)
 
-[![New](https://img.shields.io/badge/✨_新功能-OpenClaw_支持_自定义唤醒词_|_连续对话_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
+[![New](https://img.shields.io/badge/🎉_新功能-OpenClaw_支持_自定义唤醒词_|_连续对话_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
 
 **小爱音箱与外部 AI 服务（小智 AI、OpenClaw）的桥接器**
 
@@ -228,10 +228,10 @@ curl POST /api/play/text → API Server → SpeakerManager → 小爱音箱
 ### 📦 前置步骤
 
 1. **🔧 刷机** — 更新小爱音箱固件，开启 SSH
-   - [刷机教程](https://github.com/idootop/open-xiaoai/blob/main/docs/flash.md)
+   - [刷机教程](https://github.com/coderzc/open-xiaoai/blob/main/docs/flash.md)
 
 2. **🛠️ 音箱补丁程序安装 Client** — 在音箱上运行 Rust Client 端
-   - [补丁程序安装教程](https://github.com/idootop/open-xiaoai/blob/main/packages/client-rust/README.md)
+   - [补丁程序安装教程](https://github.com/coderzc/open-xiaoai/blob/main/packages/client-rust/README.md)
 
 ### 🐳 Docker Compose（推荐）
 

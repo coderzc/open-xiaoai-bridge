@@ -72,7 +72,7 @@ APP_CONFIG = {
         "keywords": [
             "你好小智",
             "小智小智",
-            "hi openclaw",
+            "hi open claw",
             "你好龙虾",
             "龙虾你好",
         ],
@@ -88,6 +88,8 @@ APP_CONFIG = {
         "keywords_score": 2.0,
         # 唤醒词检测阈值（越低越灵敏，越高越难触发）
         "keywords_threshold": 0.2,
+        # 唤醒词检测时的最小静默时长（ms），静默超过该时长则判定为说完
+        "min_silence_duration": 480,
     },
     "vad": {
         # 语音检测阈值（0-1，越小越灵敏）

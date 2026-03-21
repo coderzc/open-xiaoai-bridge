@@ -23,7 +23,7 @@ class _KWS:
         self.vad_active = False
         self.vad_speech_frames = 0  # 语音帧计数
         self.vad_silence_frames = 0  # 静音帧计数
-        self.vad_max_silence_frames = 15  # 15帧（约480ms）静音后停止处理
+        self.vad_min_silence_frames = 15  # 静默超过该帧数则判定为说完
         self.vad_start_time = time.time()
         
         # 设置帧大小为 512 以兼容 Silero VAD
@@ -36,8 +36,11 @@ class _KWS:
 
     def apply_runtime_config(self):
         """同步最新 KWS 相关配置。"""
-        config = self.config_manager.get_app_config("vad", {})
-        self.vad_threshold = config.get("threshold", 0.10)
+        vad_config = self.config_manager.get_app_config("vad", {})
+        self.vad_threshold = vad_config.get("threshold", 0.10)
+        kws_config = self.config_manager.get_app_config("kws", {})
+        min_silence_ms = kws_config.get("min_silence_duration", 480)
+        self.vad_min_silence_frames = int(min_silence_ms / self.frame_duration_ms)
 
     def _on_config_reload(self, *_args):
         """配置重载后刷新运行时参数。"""
@@ -61,7 +64,8 @@ class _KWS:
         config = ConfigManager.instance()
         keywords_score = config.get_app_config("kws.keywords_score", 2.0)
         keywords_threshold = config.get_app_config("kws.keywords_threshold", 0.2)
-        logger.kws_event("关键词唤醒服务启动", f"关键词得分≥{keywords_score}, 阈值={keywords_threshold}, VAD门限={self.vad_max_silence_frames}帧")
+        min_silence_ms = config.get_app_config("kws.min_silence_duration", 480)
+        logger.kws_event("关键词唤醒服务启动", f"关键词:[score:{keywords_score}, threshold:{keywords_threshold}], VAD:[threshold:{self.vad_threshold}, min_silence:{min_silence_ms}ms]")
 
     def get_file_path(self, file_name: str):
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -124,7 +128,7 @@ class _KWS:
                     self.vad_silence_frames += 1
                     
                     # 在激活状态下，允许一定的静音间隙
-                    if self.vad_silence_frames <= self.vad_max_silence_frames:
+                    if self.vad_silence_frames <= self.vad_min_silence_frames:
                         # 继续将音频送入 KWS，允许短暂的静音
                         result = SherpaOnnx.kws(frames)
                         if result:
