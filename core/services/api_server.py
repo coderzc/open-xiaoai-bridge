@@ -352,15 +352,19 @@ class APIServer:
                     status=503
                 )
 
-            # 打断原来的小爱同学
-            await speaker.run_shell("mphelper pause")
-            await speaker.abort_xiaoai()
+            # Stop all audio playback:
+            # - killall tts_play.sh miplayer: stop blocking TTS
+            # - mphelper pause: stop non-blocking TTS / mediaplayer
+            # - stop_playing: kill aplay (PCM channel)
+            import open_xiaoai_server
+            await speaker.run_shell(
+                "killall tts_play.sh miplayer 2>/dev/null; mphelper pause"
+            )
+            await open_xiaoai_server.stop_playing()
+            await open_xiaoai_server.start_playing()
             # 停止连续对话
             if xiaoai:
                 xiaoai.stop_conversation()
-            # 等待 2 秒，让小爱 TTS 恢复可用
-            import time
-            time.sleep(2)
 
             return web.json_response({"success": True})
 

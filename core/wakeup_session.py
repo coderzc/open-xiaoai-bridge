@@ -112,11 +112,21 @@ class WakeupSessionManager:
         elif self._openclaw_controller and self._openclaw_controller.is_active():
             self._openclaw_controller.stop()
 
-        # Kill aplay on the device to stop PCM playback immediately
+        # Stop all audio playback on the device:
+        # - killall tts_play.sh miplayer: stop blocking TTS (tts_play.sh + child miplayer)
+        # - mphelper pause: stop non-blocking TTS (mibrain text_to_speech via mediaplayer)
+        # - stop_playing: kill aplay (our PCM channel)
+        # Also restart recording (may have been stopped by OpenClaw during TTS).
         async def _stop_and_restart_playing():
             import open_xiaoai_server
+            speaker = get_speaker()
+            if speaker:
+                await speaker.run_shell(
+                    "killall tts_play.sh miplayer 2>/dev/null; mphelper pause"
+                )
             await open_xiaoai_server.stop_playing()
             await open_xiaoai_server.start_playing()
+            await open_xiaoai_server.start_recording()
 
         asyncio.run_coroutine_threadsafe(_stop_and_restart_playing(), loop)
 
