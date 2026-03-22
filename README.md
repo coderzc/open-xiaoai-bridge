@@ -68,13 +68,6 @@ cd open-xiaoai-bridge
 API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLED=1 ./scripts/start.sh
 ```
 
-脚本会自动检查依赖、下载模型、生成关键词文件。也可以手动运行：
-
-```bash
-uv sync && uv run main.py
-# CONFIG_PATH=/path/to/custom_config.py uv run main.py  # 自定义配置文件路径
-```
-
 ### ⚙️ 环境变量
 
 | 变量                  | 说明          | 默认值           |
