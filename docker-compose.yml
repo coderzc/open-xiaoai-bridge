@@ -15,5 +15,6 @@ services:
     volumes:
       - ./config.py:/app/config.py
       - ./openclaw:/app/openclaw
+      - ./models:/app/core/models
     stdin_open: true
     tty: true      

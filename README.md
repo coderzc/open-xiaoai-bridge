@@ -44,7 +44,16 @@
 2. **🛠️ 音箱补丁程序安装 Client** — 在音箱上运行 Rust Client 端
    - [补丁程序安装教程](https://github.com/coderzc/open-xiaoai/blob/main/packages/client-rust/README.md)
 
+### 📥 模型文件（小智/OpenClaw 模式需要）
+
+如果你启用小智 AI 或 OpenClaw 连续对话功能，需要下载 VAD + KWS + ASR 模型文件：
+
+1. 从 [releases](https://github.com/coderzc/open-xiaoai-bridge/releases/tag/vad-kws-asr-models) 下载模型压缩包
+2. 解压模型文件（路径见下方具体部署方式）
+
 ### 🐳 Docker Compose（推荐）
+
+模型文件解压到 `./models` 目录，然后下载配置并启动：
 
 ```bash
 # 下载配置文件
@@ -55,7 +64,16 @@ curl -O https://raw.githubusercontent.com/coderzc/open-xiaoai-bridge/main/docker
 docker compose up -d
 ```
 
+`docker-compose.yml` 已包含模型目录挂载：
+
+```yaml
+volumes:
+  - ./models:/app/core/models
+```
+
 ### 💻 本地编译
+
+模型文件解压到 `core/models/` 目录，然后克隆仓库并启动：
 
 ```bash
 git clone https://github.com/coderzc/open-xiaoai-bridge.git
@@ -534,14 +552,7 @@ APP_CONFIG = {
 
 1. **模型文件在哪下载？**
 
-    从 [releases](https://github.com/coderzc/open-xiaoai-bridge/releases/tag/vad-kws-asr-models) 下载 VAD + KWS + ASR 模型，解压到 `core/models/`。
-
-    Docker 部署需挂载：
-
-    ```yaml
-    volumes:
-      - ./models:/app/core/models
-    ```
+    启用小智 AI 或 OpenClaw 连续对话功能需要下载 VAD + KWS + ASR 模型文件，详见[快速开始 - Docker Compose](#-docker-compose推荐) 或 [本地编译](#-本地编译) 章节。
 
 2. **如何打断 AI 的回答？**
 
