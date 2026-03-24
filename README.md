@@ -608,9 +608,10 @@ services:
 
 **方式 2：如果 hosts 方式不行，就把 OpenClaw 改成监听 LAN**
 
-在 OpenClaw 的配置里把 Gateway 改成 LAN 模式，并把局域网地址加到 `controlUi.allowedOrigins`：
+可以直接一起改成下面这样：
 
-```json
+```text
+# OpenClaw
 {
   "gateway": {
     "port": 18789,
@@ -624,11 +625,8 @@ services:
     }
   }
 }
-```
 
-然后再在 `config.py` 中改成宿主机局域网 IP，例如：
-
-```python
+# config.py
     "openclaw": {
         "url": "ws://192.168.5.123:18789",
         "token": "xxxxx"
