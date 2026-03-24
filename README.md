@@ -71,7 +71,7 @@ docker compose up -d
 > image: ghcr.nju.edu.cn/coderzc/open-xiaoai-bridge:latest
 > ```
 
-> **🪟 Windows 用户**：如果 `docker compose up -d` 启动出现无法连接小爱音箱的情况，请查看 [Docker / Windows 常见问题](#-docker--windows)。
+> **🪟 Windows 用户**：如果需要让容器访问宿主机上的 OpenClaw，请查看 [Docker / Windows 常见问题](#-docker--windows)。
 
 `docker-compose.yml` 已包含模型目录挂载：
 
@@ -577,26 +577,38 @@ APP_CONFIG = {
 
 ### 🐳 Docker / Windows
 
-#### 1. Windows 上执行 `docker compose up -d` ， 小爱音箱无法连接上怎么办？
+#### 1. Windows 上如果想在容器里通过 `127.0.0.1` 直连宿主机上的 OpenClaw，怎么办？
 
-Windows 不要使用 `network_mode: host`，否则导致端口映射失效，删除这一行，保留端口映射即可：
+默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
+
+需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是 Windows 宿主机。
+
+如果你想继续通过 `127.0.0.1` 去直连宿主机上的 OpenClaw，可以按下面两种方式处理：
+
+**方式 1：给容器加 hosts 映射**
+
+在 `docker-compose.yml` 里添加：
 
 ```yaml
 services:
     open-xiaoai-bridge:
-        image: ghcr.io/coderzc/open-xiaoai-bridge:latest
-        restart: unless-stopped
-        # network_mode: host # 删除这行
-        ports:
-            - "4399:4399"
-            - "9092:9092"
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
 ```
 
-#### 删除 `network_mode: host` Docker容器会变为桥接模式，所以config.py也需要修改
+然后在 `config.py` 中把 OpenClaw 地址改成：
 
-由于桥接模式，容器里的 `127.0.0.1` / `localhost` 指向的是容器自己，不是 Windows 宿主机。
+```python
+    "openclaw": {
+        "url": "ws://host.docker.internal:18789",
+        "token": "xxxxx"
+        ...
+    }
+```
 
-需要改成 `宿主机局域网IP地址`，例如：
+**方式 2：如果 hosts 方式不行，就把 OpenClaw 改成监听局域网地址**
+
+把 OpenClaw Gateway 改成监听 `0.0.0.0` 或宿主机局域网 IP，再在 `config.py` 中改成宿主机局域网 IP，例如：
 
 ```python
     "openclaw": {
@@ -604,13 +616,12 @@ services:
         "token": "xxxxx"
         ...
     }
-# 其中"192.168.5.123"是宿主机局域网的IP地址
 ```
-PS:最好固定IP地址。
 
-OpenClaw 或其他本机 HTTP / WebSocket 地址同理。
+PS: 最好固定 IP 地址。
 
-PS：由于修改了ip地址，OpenClaw的配置中需要调整
+如果 OpenClaw 的配置里限制了 `controlUi.allowedOrigins`，也要把对应的局域网地址加进去：
+
 ```bash
   "gateway": {
     "port": 18789,
@@ -619,7 +630,7 @@ PS：由于修改了ip地址，OpenClaw的配置中需要调整
       "allowedOrigins": [
         "http://localhost:18789",
         "http://127.0.0.1:18789",
-        "http://192.168.5.123:18789", # 添加这行，否则open-xiaoai-bridge无法访问
+        "http://192.168.5.123:18789", # 添加这行，否则 open-xiaoai-bridge 无法访问
       ]
     },
 ```
