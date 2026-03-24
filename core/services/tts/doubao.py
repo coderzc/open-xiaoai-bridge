@@ -23,19 +23,35 @@ class DoubaoTTS:
         "zh_female_xiaohe_uranus_bigtts": "小何 2.0",
         "zh_male_m191_uranus_bigtts": "云舟 2.0",
         "zh_male_taocheng_uranus_bigtts": "小天 2.0",
+        "zh_male_liufei_uranus_bigtts": "刘飞 2.0",
+        "zh_male_sophie_uranus_bigtts": "魅力苏菲 2.0",
+        "zh_female_qingxinnvsheng_uranus_bigtts": "清新女声 2.0",
+        "zh_female_sajiaoxuemei_uranus_bigtts": "撒娇学妹 2.0",
+        "zh_female_tianmeixiaoyuan_uranus_bigtts": "甜美小源 2.0",
+        "zh_female_tianmeitaozi_uranus_bigtts": "甜美桃子 2.0",
+        "zh_female_shuangkuaisisi_uranus_bigtts": "爽快思思 2.0",
+        "zh_female_peiqi_uranus_bigtts": "佩奇猪 2.0",
+        "zh_female_linjianvhai_uranus_bigtts": "邻家女孩 2.0",
+        "zh_male_shaonianzixin_uranus_bigtts": "少年梓辛/Brayan 2.0",
+        "zh_male_sunwukong_uranus_bigtts": "猴哥 2.0",
+        "zh_female_kefunvsheng_uranus_bigtts": "暖阳女声 2.0",
 
         # ===== 有声阅读 =====
-        "zh_female_xueayi_saturn_bigtts": "儿童绘本",
+        "zh_female_xiaoxue_uranus_bigtts": "儿童绘本 2.0",
 
         # ===== 视频配音 =====
-        "zh_male_dayi_saturn_bigtts": "大壹",
-        "zh_female_mizai_saturn_bigtts": "黑猫侦探社咪",
-        "zh_female_jitangnv_saturn_bigtts": "鸡汤女",
-        "zh_female_meilinvyou_saturn_bigtts": "魅力女友",
-        "zh_female_santongyongns_saturn_bigtts": "流畅女声",
-        "zh_male_ruyayichen_saturn_bigtts": "儒雅逸辰",
+        "zh_male_dayi_uranus_bigtts": "大壹 2.0",
+        "zh_female_mizai_uranus_bigtts": "黑猫侦探社咪仔 2.0",
+        "zh_female_jitangnv_uranus_bigtts": "鸡汤女 2.0",
+        "zh_female_meilinvyou_uranus_bigtts": "魅力女友 2.0",
+        "zh_female_liuchangnv_uranus_bigtts": "流畅女声 2.0",
+        "zh_male_ruyayichen_uranus_bigtts": "儒雅逸辰 2.0",
+
+        # ===== 教育场景 =====
+        "zh_female_yingyujiaoxue_uranus_bigtts": "Tina老师 2.0",
 
         # ===== 角色扮演 =====
+        "zh_female_cancan_uranus_bigtts": "知性灿灿 2.0",
         "saturn_zh_female_keainvsheng_tob": "可爱女生",
         "saturn_zh_female_tiaopigongzhu_tob": "调皮公主",
         "saturn_zh_male_shuanglangshaonian_tob": "爽朗少年",
