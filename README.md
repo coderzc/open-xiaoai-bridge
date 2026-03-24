@@ -608,13 +608,20 @@ services:
 
 **方式 2：如果 hosts 方式不行，就把 OpenClaw 改成监听 LAN**
 
-在 OpenClaw 的配置里把 Gateway 改成 LAN 模式：
+在 OpenClaw 的配置里把 Gateway 改成 LAN 模式，并把局域网地址加到 `controlUi.allowedOrigins`：
 
 ```json
 {
   "gateway": {
     "port": 18789,
-    "mode": "lan"
+    "mode": "lan",
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789",
+        "http://192.168.5.123:18789"
+      ]
+    }
   }
 }
 ```
@@ -631,20 +638,6 @@ services:
 
 PS: 最好固定 IP 地址。
 
-如果 OpenClaw 的配置里限制了 `controlUi.allowedOrigins`，也要把对应的局域网地址加进去：
-
-```bash
-  "gateway": {
-    "port": 18789,
-    ...
-    "controlUi": {
-      "allowedOrigins": [
-        "http://localhost:18789",
-        "http://127.0.0.1:18789",
-        "http://192.168.5.123:18789", # 添加这行，否则 open-xiaoai-bridge 无法访问
-      ]
-    },
-```
 ### 🎙️ 唤醒词与连续对话
 
 1. **模型文件在哪下载？**
