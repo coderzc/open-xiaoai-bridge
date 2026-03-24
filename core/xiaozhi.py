@@ -6,14 +6,19 @@ This module is responsible for:
 - Protocol-level message handling
 - Audio codec management and stream control
 - JSON message parsing (TTS/STT/LLM)
+- Wakeup session: VAD-driven listen/stop cycle
 
 The main application flow is managed by app.py.
 """
 
 import asyncio
 import json
+import os
 import threading
 
+import open_xiaoai_server
+
+from core.ref import get_audio_codec, get_speaker, get_vad, set_speech_frames
 from core.services.protocols.protocol import Protocol
 from core.services.protocols.typing import (
     AbortReason,
@@ -22,7 +27,26 @@ from core.services.protocols.typing import (
 )
 from core.utils.config import ConfigManager
 from core.utils.logger import logger
-from core.wakeup_session import EventManager
+
+_NOTIFY_SOUND_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "assets", "sounds", "tts_notify.mp3",
+)
+
+
+def _load_notify_sound() -> bytes | None:
+    """Decode tts_notify.mp3 to PCM at startup."""
+    if not os.path.isfile(_NOTIFY_SOUND_PATH):
+        return None
+    try:
+        with open(_NOTIFY_SOUND_PATH, "rb") as f:
+            mp3_data = f.read()
+        return open_xiaoai_server.decode_audio(mp3_data, format="mp3", sample_rate=24000)
+    except Exception:
+        return None
+
+
+_NOTIFY_PCM = _load_notify_sound()
 
 
 class XiaoZhi:
@@ -51,6 +75,12 @@ class XiaoZhi:
         # References (set by MainApp)
         self._app = None
         self._audio_codec = None
+
+        # Wakeup session state
+        self._session_loop: asyncio.AbstractEventLoop | None = None
+        self._vad_future: asyncio.Future | None = None
+        self._tts_stop_future: asyncio.Future | None = None
+        self._is_first_round = False
 
     def set_app(self, app):
         """Set reference to main app."""
@@ -184,10 +214,8 @@ class XiaoZhi:
         """Handle TTS message."""
         state = data.get("state", "")
         if state == "start":
-            EventManager.on_tts_start(data.get("session_id"))
             self._app.schedule(lambda: self._handle_tts_start())
         elif state == "stop":
-            EventManager.on_tts_end(data.get("session_id"))
             self._app.schedule(lambda: self._handle_tts_stop())
         elif state == "sentence_start":
             text = data.get("text", "")
@@ -202,7 +230,10 @@ class XiaoZhi:
 
     def _handle_tts_stop(self):
         """Handle TTS stop."""
-        pass
+        if self._tts_stop_future and not self._tts_stop_future.done() and self._session_loop:
+            self._session_loop.call_soon_threadsafe(
+                self._tts_stop_future.set_result, True
+            )
 
     def _handle_stt_message(self, data):
         """Handle STT message."""
@@ -213,6 +244,10 @@ class XiaoZhi:
 
     def _handle_llm_message(self, data):
         """Handle LLM message."""
+        text = data.get("text", "")
+        if text:
+            logger.ai_response(text, module="XiaoZhi")
+            self._app.schedule(lambda: self._app.set_chat_message("assistant", text))
         emotion = data.get("emotion", "")
         if emotion:
             self._app.schedule(lambda: self._app.set_emotion(emotion))
@@ -314,6 +349,128 @@ class XiaoZhi:
         """Send abort speaking command."""
         if self.protocol:
             await self.protocol.send_abort_speaking(reason)
+
+    # Wakeup session
+
+    async def start_wakeup_session(self):
+        """Start a VAD-driven wakeup session: notify → listen → silence → stop."""
+        if not self.protocol:
+            logger.warning("XiaoZhi is not ready, skip wakeup session", module="XiaoZhi")
+            return
+
+        self._session_loop = asyncio.get_running_loop()
+        vad = get_vad()
+        codec = get_audio_codec()
+        speaker = get_speaker()
+
+        self.set_device_state(DeviceState.IDLE)
+        await self.send_abort_speaking(AbortReason.ABORT)
+
+        if self._is_first_round:
+            self._is_first_round = False
+            await self._play_notify(speaker)
+
+        # Wait for speech
+        vad.resume("speech")
+        result = await self._wait_vad_event(
+            timeout=self.config.get_app_config("wakeup.timeout", 20)
+        )
+        if result is None:
+            self.set_device_state(DeviceState.IDLE)
+            logger.info("Wakeup timeout, exit listening", module="XiaoZhi")
+            after_wakeup = self.config.get_app_config("wakeup.after_wakeup")
+            if after_wakeup and speaker:
+                await after_wakeup(speaker)
+            return
+
+        event_type, event_data = result
+        if event_type != "speech":
+            logger.debug(f"Expected speech, got {event_type}", module="XiaoZhi")
+            return
+
+        # Speech detected — send buffered audio and start listening
+        logger.debug(
+            f"VAD detected speech, buffer size: {len(event_data or b'')}",
+            module="XiaoZhi",
+        )
+        set_speech_frames(event_data)
+        if codec:
+            codec.input_stream.start_stream()
+        await self.send_start_listening(ListeningMode.MANUAL)
+        self.set_device_state(DeviceState.LISTENING)
+
+        # Wait for silence
+        vad.resume("silence")
+        result = await self._wait_vad_event()
+        if result:
+            event_type, _ = result
+            logger.debug(f"VAD detected silence, stop listening", module="XiaoZhi")
+
+        # Prepare TTS stop future before sending stop_listening,
+        # so we don't miss the tts_stop event.
+        self._tts_stop_future = self._session_loop.create_future()
+
+        await self.send_stop_listening()
+        self.set_device_state(DeviceState.IDLE)
+
+        # Wait for TTS to finish, then start next round
+        tts_finished = await self._wait_tts_stop(timeout=30)
+        if tts_finished:
+            await self.start_wakeup_session()
+
+    async def _wait_vad_event(self, timeout=None):
+        """Wait for a VAD event (speech/silence)."""
+        from core.wakeup_session import EventManager
+
+        self._vad_future = self._session_loop.create_future()
+        original_on_speech = EventManager.on_speech
+        original_on_silence = EventManager.on_silence
+
+        def _on_speech(speech_buffer):
+            if self._vad_future and not self._vad_future.done():
+                self._session_loop.call_soon_threadsafe(
+                    self._vad_future.set_result, ("speech", speech_buffer)
+                )
+
+        def _on_silence():
+            if self._vad_future and not self._vad_future.done():
+                self._session_loop.call_soon_threadsafe(
+                    self._vad_future.set_result, ("silence", None)
+                )
+
+        EventManager.on_speech = _on_speech
+        EventManager.on_silence = _on_silence
+
+        try:
+            return await asyncio.wait_for(self._vad_future, timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            EventManager.on_speech = original_on_speech
+            EventManager.on_silence = original_on_silence
+            self._vad_future = None
+
+    async def _wait_tts_stop(self, timeout=None):
+        """Wait for TTS playback to finish."""
+        if not self._tts_stop_future:
+            self._tts_stop_future = self._session_loop.create_future()
+        try:
+            return await asyncio.wait_for(self._tts_stop_future, timeout=timeout)
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self._tts_stop_future = None
+
+    async def _play_notify(self, speaker):
+        """Play the listening-ready notification sound."""
+        if not _NOTIFY_PCM or not speaker:
+            return
+        try:
+            await speaker.play(buffer=_NOTIFY_PCM)
+            duration = len(_NOTIFY_PCM) / (24000 * 2)
+            await asyncio.sleep(duration)
+        except Exception as exc:
+            logger.debug(f"Notify sound error: {exc}", module="XiaoZhi")
 
     # Shutdown
 

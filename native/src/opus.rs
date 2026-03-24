@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::sync::Mutex;
 
 use audiopus::coder::{Decoder, Encoder};
 use audiopus::packet::Packet;
@@ -25,9 +26,9 @@ fn parse_sample_rate(sample_rate: u32) -> PyResult<SampleRate> {
 }
 
 /// Opus encoder exposed to Python via PyO3.
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct OpusEncoder {
-    encoder: Encoder,
+    encoder: Mutex<Encoder>,
 }
 
 #[pymethods]
@@ -44,7 +45,9 @@ impl OpusEncoder {
         let encoder = Encoder::new(sr, ch, Application::Audio).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Opus encoder init failed: {}", e))
         })?;
-        Ok(Self { encoder })
+        Ok(Self {
+            encoder: Mutex::new(encoder),
+        })
     }
 
     /// Encode PCM data (16-bit signed LE) into an Opus frame.
@@ -72,7 +75,10 @@ impl OpusEncoder {
             .collect();
 
         let mut output = vec![0u8; 4000];
-        let len = self.encoder.encode(&samples, &mut output).map_err(|e| {
+        let encoder = self.encoder.lock().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Encoder lock poisoned: {}", e))
+        })?;
+        let len = encoder.encode(&samples, &mut output).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Opus encode failed: {}", e))
         })?;
 
@@ -81,9 +87,9 @@ impl OpusEncoder {
 }
 
 /// Opus decoder exposed to Python via PyO3.
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct OpusDecoder {
-    decoder: Decoder,
+    decoder: Mutex<Decoder>,
 }
 
 #[pymethods]
@@ -100,7 +106,9 @@ impl OpusDecoder {
         let decoder = Decoder::new(sr, ch).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Opus decoder init failed: {}", e))
         })?;
-        Ok(Self { decoder })
+        Ok(Self {
+            decoder: Mutex::new(decoder),
+        })
     }
 
     /// Decode an Opus frame into PCM data (16-bit signed LE).
@@ -113,7 +121,7 @@ impl OpusDecoder {
     /// Returns:
     ///     Decoded PCM bytes (16-bit signed little-endian)
     fn decode<'py>(
-        &mut self,
+        &self,
         py: Python<'py>,
         opus_data: &[u8],
         frame_size: usize,
@@ -124,9 +132,15 @@ impl OpusDecoder {
         })?;
 
         let mut output = vec![0i16; frame_size];
-        let decoded = self
-            .decoder
-            .decode(Some(packet), MutSignals::try_from(&mut output[..]).unwrap(), decode_fec)
+        let mut decoder = self.decoder.lock().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Decoder lock poisoned: {}", e))
+        })?;
+        let decoded = decoder
+            .decode(
+                Some(packet),
+                MutSignals::try_from(&mut output[..]).unwrap(),
+                decode_fec,
+            )
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Opus decode failed: {}", e))
             })?;
