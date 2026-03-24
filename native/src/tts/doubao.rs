@@ -177,10 +177,7 @@ impl DoubaoStreamClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             if let Some(ready_tx) = ready_tx {
-                let _ = ready_tx.send(Err(format!(
-                    "API returned status {}: {}",
-                    status, body
-                )));
+                let _ = ready_tx.send(Err(format!("API returned status {}: {}", status, body)));
             }
             return Err(format!("API returned status {}: {}", status, body));
         }
@@ -200,7 +197,17 @@ impl DoubaoStreamClient {
             if line.is_empty() {
                 continue;
             }
-            match Self::parse_line(&line)? {
+            let parsed_line = match Self::parse_line(&line) {
+                Ok(parsed_line) => parsed_line,
+                Err(err) => {
+                    if let Some(tx_ready) = ready_tx.take() {
+                        let _ = tx_ready.send(Err(err.clone()));
+                    }
+                    return Err(err);
+                }
+            };
+
+            match parsed_line {
                 Some(bytes) if !bytes.is_empty() => {
                     if let Some(tx_ready) = ready_tx.take() {
                         let _ = tx_ready.send(Ok(()));

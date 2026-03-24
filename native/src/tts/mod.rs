@@ -291,7 +291,13 @@ pub fn tts_stream_play(
                         break;
                     }
                     pcm_sent_bytes += chunk_len;
-                    throttle_if_needed(pcm_sent_bytes, sample_rate, playback_start.unwrap(), playback_token).await;
+                    throttle_if_needed(
+                        pcm_sent_bytes,
+                        sample_rate,
+                        playback_start.unwrap(),
+                        playback_token,
+                    )
+                    .await;
                     if !is_playback_session_active(playback_token) {
                         fetch_handle.abort();
                         break;
@@ -321,7 +327,13 @@ pub fn tts_stream_play(
                                 break;
                             }
                             pcm_sent_bytes += chunk_len;
-                            throttle_if_needed(pcm_sent_bytes, sample_rate, playback_start.unwrap(), playback_token).await;
+                            throttle_if_needed(
+                                pcm_sent_bytes,
+                                sample_rate,
+                                playback_start.unwrap(),
+                                playback_token,
+                            )
+                            .await;
                             if !is_playback_session_active(playback_token) {
                                 fetch_handle.abort();
                                 break;
@@ -362,7 +374,13 @@ pub fn tts_stream_play(
                 break;
             }
             pcm_sent_bytes += chunk_len;
-            throttle_if_needed(pcm_sent_bytes, sample_rate, playback_start.unwrap(), playback_token).await;
+            throttle_if_needed(
+                pcm_sent_bytes,
+                sample_rate,
+                playback_start.unwrap(),
+                playback_token,
+            )
+            .await;
             if !is_playback_session_active(playback_token) {
                 fetch_handle.abort();
                 break;
@@ -370,14 +388,8 @@ pub fn tts_stream_play(
         }
 
         let fetch_failed = match fetch_handle.await {
-            Ok(Err(e)) => {
-                crate::pylog!("[TTS] Stream fetch error: {}", e);
-                Some(e.to_string())
-            }
-            Err(e) => {
-                crate::pylog!("[TTS] Stream fetch task panicked: {}", e);
-                Some(e.to_string())
-            }
+            Ok(Err(e)) => Some(e.to_string()),
+            Err(e) => Some(format!("stream fetch task panicked: {}", e)),
             _ => None,
         };
 
@@ -403,6 +415,14 @@ pub fn tts_stream_play(
                     err_msg
                 )));
             }
+
+            crate::pylog_error!(
+                "[TTS] Stream interrupted after partial audio output: format={}, encoded={} bytes, pcm={} bytes, error={}",
+                format,
+                total_encoded_bytes,
+                total_pcm_bytes,
+                err_msg
+            );
         }
 
         sleep_until_playback_finishes(remaining_ms, playback_token).await;
@@ -493,7 +513,13 @@ pub fn tts_stream_play_background(
                             break;
                         }
                         pcm_sent_bytes += chunk_len;
-                        throttle_if_needed(pcm_sent_bytes, sample_rate, playback_start.unwrap(), playback_token).await;
+                        throttle_if_needed(
+                            pcm_sent_bytes,
+                            sample_rate,
+                            playback_start.unwrap(),
+                            playback_token,
+                        )
+                        .await;
                         if !is_playback_session_active(playback_token) {
                             fetch_handle.abort();
                             break;
@@ -523,7 +549,13 @@ pub fn tts_stream_play_background(
                                     break;
                                 }
                                 pcm_sent_bytes += chunk_len;
-                                throttle_if_needed(pcm_sent_bytes, sample_rate, playback_start.unwrap(), playback_token).await;
+                                throttle_if_needed(
+                                    pcm_sent_bytes,
+                                    sample_rate,
+                                    playback_start.unwrap(),
+                                    playback_token,
+                                )
+                                .await;
                                 if !is_playback_session_active(playback_token) {
                                     fetch_handle.abort();
                                     break;
@@ -564,7 +596,13 @@ pub fn tts_stream_play_background(
                     break;
                 }
                 pcm_sent_bytes += chunk_len;
-                throttle_if_needed(pcm_sent_bytes, sample_rate, playback_start.unwrap(), playback_token).await;
+                throttle_if_needed(
+                    pcm_sent_bytes,
+                    sample_rate,
+                    playback_start.unwrap(),
+                    playback_token,
+                )
+                .await;
                 if !is_playback_session_active(playback_token) {
                     fetch_handle.abort();
                     break;
@@ -572,14 +610,8 @@ pub fn tts_stream_play_background(
             }
 
             let fetch_failed = match fetch_handle.await {
-                Ok(Err(e)) => {
-                    crate::pylog!("[TTS] Stream fetch error: {}", e);
-                    Some(e.to_string())
-                }
-                Err(e) => {
-                    crate::pylog!("[TTS] Stream fetch task panicked: {}", e);
-                    Some(e.to_string())
-                }
+                Ok(Err(e)) => Some(e.to_string()),
+                Err(e) => Some(format!("stream fetch task panicked: {}", e)),
                 _ => None,
             };
 
@@ -599,9 +631,12 @@ pub fn tts_stream_play_background(
             );
 
             if let Some(err_msg) = fetch_failed {
-                if total_pcm_bytes == 0 {
-                    crate::pylog!(
-                        "[TTS] Background stream ended with no audio: {}",
+                if total_pcm_bytes > 0 {
+                    crate::pylog_error!(
+                        "[TTS] Background stream interrupted after partial audio output: format={}, encoded={} bytes, pcm={} bytes, error={}",
+                        format,
+                        total_encoded_bytes,
+                        total_pcm_bytes,
                         err_msg
                     );
                 }
@@ -614,7 +649,7 @@ pub fn tts_stream_play_background(
             Ok(Ok(())) => Ok(()),
             Ok(Err(err)) => Err(pyo3::exceptions::PyRuntimeError::new_err(err)),
             Err(_) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "background stream task ended before request was accepted",
+                "background stream task ended before reporting TTS request outcome",
             )),
         }
     })
@@ -720,7 +755,7 @@ pub fn tts_play_background(
             let pcm = match decode_audio_to_pcm(&encoded_audio, &format, sample_rate) {
                 Ok(pcm) => pcm,
                 Err(err) => {
-                    crate::pylog!("[TTS] Background decode error: {}", err);
+                    crate::pylog_error!("[TTS] Background decode error: {}", err);
                     return;
                 }
             };
@@ -749,7 +784,7 @@ pub fn tts_play_background(
             Ok(Ok(())) => Ok(()),
             Ok(Err(err)) => Err(pyo3::exceptions::PyRuntimeError::new_err(err)),
             Err(_) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "background playback task ended before request was accepted",
+                "background playback task ended before reporting TTS request outcome",
             )),
         }
     })

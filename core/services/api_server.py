@@ -409,6 +409,12 @@ class APIServer:
                 ]
             }
         """
+        speaker_id = "<unknown>"
+        resource_id_for_log = "<unknown>"
+        resolved_format = "<unknown>"
+        blocking = False
+        use_stream = False
+
         try:
             data = await request.json()
             text = data.get("text")
@@ -426,6 +432,7 @@ class APIServer:
             access_key = data.get("access_key") or tts_config.get("access_key")
             # resource_id is now optional - will be auto-detected based on speaker
             resource_id = data.get("resource_id") or tts_config.get("resource_id")
+            resource_id_for_log = resource_id or "<auto>"
 
             if not all([app_id, access_key]):
                 return web.json_response(
@@ -454,6 +461,7 @@ class APIServer:
                 speaker=speaker_id,
             )
             resolved_format = tts.resolve_audio_format(text)
+            resource_id_for_log = tts.resource_id
             logger.info(
                 f"[APIServer] Doubao TTS: speaker={speaker_id}, resource_id={tts.resource_id}, format={resolved_format}"
             )
@@ -539,7 +547,12 @@ class APIServer:
                 status=400
             )
         except Exception as e:
-            logger.error(f"[APIServer] Error in Doubao TTS: {e}")
+            logger.error(
+                f"[APIServer] Doubao TTS failed: "
+                f"speaker={speaker_id}, resource_id={resource_id_for_log}, "
+                f"format={resolved_format}, blocking={blocking}, stream={use_stream}, "
+                f"error={type(e).__name__}: {e}"
+            )
             return web.json_response(
                 {"success": False, "error": str(e)},
                 status=500

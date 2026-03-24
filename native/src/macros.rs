@@ -12,3 +12,10 @@ macro_rules! pylog {
         crate::python::PythonManager::instance().log(format!($($arg)*));
     };
 }
+
+#[macro_export]
+macro_rules! pylog_error {
+    ($($arg:tt)*) => {
+        crate::python::PythonManager::instance().log_error(format!($($arg)*));
+    };
+}
