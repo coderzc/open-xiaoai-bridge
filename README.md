@@ -606,9 +606,20 @@ services:
     }
 ```
 
-**方式 2：如果 hosts 方式不行，就把 OpenClaw 改成监听局域网地址**
+**方式 2：如果 hosts 方式不行，就把 OpenClaw 改成监听 LAN**
 
-把 OpenClaw Gateway 改成监听 `0.0.0.0` 或宿主机局域网 IP，再在 `config.py` 中改成宿主机局域网 IP，例如：
+在 OpenClaw 的配置里把 Gateway 改成 LAN 模式：
+
+```json
+{
+  "gateway": {
+    "port": 18789,
+    "mode": "lan"
+  }
+}
+```
+
+然后再在 `config.py` 中改成宿主机局域网 IP，例如：
 
 ```python
     "openclaw": {
