@@ -71,7 +71,7 @@ docker compose up -d
 > image: ghcr.nju.edu.cn/coderzc/open-xiaoai-bridge:latest
 > ```
 
-> **🪟 Windows 用户**：如果需要让容器访问宿主机上的 OpenClaw，请查看 [Docker / Windows 常见问题](#-docker--windows)。
+> **💡 容器访问宿主机 OpenClaw**：如果需要让容器访问宿主机上的 OpenClaw，请查看 [Docker 常见问题](#-docker)。
 
 `docker-compose.yml` 已包含模型目录挂载：
 
@@ -575,13 +575,13 @@ APP_CONFIG = {
 
 ## ❓ 常见问题
 
-### 🐳 Docker / Windows
+### 🐳 Docker
 
-#### 1. Windows 上如果想在容器里通过 `127.0.0.1` 直连宿主机上的 OpenClaw，怎么办？
+#### 1. 如果想在容器里通过 `127.0.0.1` 直连宿主机上的 OpenClaw，怎么办？
 
 默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
 
-需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是 Windows 宿主机。
+需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是宿主机。
 
 如果你想继续通过 `127.0.0.1` 去直连宿主机上的 OpenClaw，可以按下面两种方式处理：
 
