@@ -71,6 +71,8 @@ docker compose up -d
 > image: ghcr.nju.edu.cn/coderzc/open-xiaoai-bridge:latest
 > ```
 
+> **🪟 Windows 用户**：如果 `docker compose up -d` 启动出现无法连接小爱音箱的情况，请查看 [Docker / Windows 常见问题](#-docker--windows)。
+
 `docker-compose.yml` 已包含模型目录挂载：
 
 ```yaml
@@ -573,6 +575,54 @@ APP_CONFIG = {
 
 ## ❓ 常见问题
 
+### 🐳 Docker / Windows
+
+#### 1. Windows 上执行 `docker compose up -d` ， 小爱音箱无法连接上怎么办？
+
+Windows 不要使用 `network_mode: host`，否则导致端口映射失效，删除这一行，保留端口映射即可：
+
+```yaml
+services:
+    open-xiaoai-bridge:
+        image: ghcr.io/coderzc/open-xiaoai-bridge:latest
+        restart: unless-stopped
+        # network_mode: host # 删除这行
+        ports:
+            - "4399:4399"
+            - "9092:9092"
+```
+
+#### 删除 `network_mode: host` Docker容器会变为桥接模式，所以config.py也需要修改
+
+由于桥接模式，容器里的 `127.0.0.1` / `localhost` 指向的是容器自己，不是 Windows 宿主机。
+
+需要改成 `宿主机局域网IP地址`，例如：
+
+```python
+    "openclaw": {
+        "url": "ws://192.168.5.123:18789",
+        "token": "xxxxx"
+        ...
+    }
+# 其中"192.168.5.123"是宿主机局域网的IP地址
+```
+PS:最好固定IP地址。
+
+OpenClaw 或其他本机 HTTP / WebSocket 地址同理。
+
+PS：由于修改了ip地址，OpenClaw的配置中需要调整
+```bash
+  "gateway": {
+    "port": 18789,
+    ...
+    "controlUi": {
+      "allowedOrigins": [
+        "http://localhost:18789",
+        "http://127.0.0.1:18789",
+        "http://192.168.5.123:18789", # 添加这行，否则open-xiaoai-bridge无法访问
+      ]
+    },
+```
 ### 🎙️ 唤醒词与连续对话
 
 1. **模型文件在哪下载？**
