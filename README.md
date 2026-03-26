@@ -577,53 +577,55 @@ APP_CONFIG = {
 
 ### 🐳 Docker
 
-#### 1. 如果想在容器里通过 `127.0.0.1` 直连宿主机上的 OpenClaw，怎么办？
+1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw？**
 
-默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
+    默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
 
-需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是宿主机。
+    需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是宿主机。
 
-如果你想继续通过 `127.0.0.1` 去直连宿主机上的 OpenClaw，可以按下面两种方式处理：
+    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw，使用 **方式 1**:
 
-**方式 1：增加 `network_mode: host`**
+    **方式 1：增加 `network_mode: host`**
 
-在 `docker-compose.yml` 里添加：
+    在 `docker-compose.yml` 里添加：
 
-```yaml
-services:
-    open-xiaoai-bridge:
-        network_mode: host
-```
+    ```yaml
+    services:
+        open-xiaoai-bridge:
+            network_mode: host
+    ```
 
-**方式 2：如果 hosts 方式不行，就把 OpenClaw 改成监听 LAN**
+    **方式 2：通过网络 IP 连接（无需 host 模式）**
 
-可以直接一起改成下面这样：
+    如果不使用 `network_mode: host`，可以让 OpenClaw 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
 
-```text
-# OpenClaw
-{
-  "gateway": {
-    "port": 18789,
-    "mode": "lan",
-    "controlUi": {
-      "allowedOrigins": [
-        "http://localhost:18789",
-        "http://127.0.0.1:18789",
-        "http://192.168.5.123:18789"
-      ]
+    可以直接一起改成下面这样：
+
+    ```text
+    # OpenClaw
+    {
+      "gateway": {
+        "port": 18789,
+        "mode": "lan",
+        "controlUi": {
+          "allowedOrigins": [
+            "http://localhost:18789",
+            "http://127.0.0.1:18789",
+            "http://192.168.5.123:18789"
+          ]
+        }
+      }
     }
-  }
-}
 
-# config.py
-    "openclaw": {
-        "url": "ws://192.168.5.123:18789",
-        "token": "xxxxx"
-        ...
-    }
-```
+    # config.py
+        "openclaw": {
+            "url": "ws://192.168.5.123:18789",
+            "token": "xxxxx"
+            ...
+        }
+    ```
 
-PS: 最好固定 IP 地址。
+    PS: 最好固定 IP 地址。
 
 ### 🎙️ 唤醒词与连续对话
 
