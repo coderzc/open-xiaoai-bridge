@@ -9,15 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 安装 Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # 安装 uv
 COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
-
-# 设置环境变量
-ENV BASH_ENV=/root/.bash_env
-RUN touch "$BASH_ENV"
-RUN echo '. "$BASH_ENV"' >> "$HOME/.bashrc"
-RUN echo '[ -s "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"' >> "$BASH_ENV"
 
 # 设置工作目录
 WORKDIR /app

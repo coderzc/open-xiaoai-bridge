@@ -22,6 +22,8 @@ dist
 
 # Debug
 *.log
+core/debug_wakeup_audio/
+core/debug_conversation_audio/
 
 # Misc
 .DS_Store
@@ -29,18 +31,27 @@ dist
 .mi.json
 xiaozhi.json
 
-# Models (large files)
+# Models (large/local files)
 core/models/
+models/
 
 # Local env files
 .env
 .env.local
 
+# Local config / compose / notes
+config-1.py
+config.local.py
+docker-compose.dev.yml
+WORKLOG.md
+
+# Device / identity / runtime state
+openclaw/identity/
+**/identity/**
+
 tests/*.wav
 local_test/
 
 output/
-
-**/identity/**
 
 .claude

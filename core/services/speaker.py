@@ -69,11 +69,11 @@ class SpeakerManager:
             return get_xiaoai().on_output_data(buffer)
 
         if blocking:
-            command = (
-                f"miplayer -f '{url}'"
-                if url
-                else f"/usr/sbin/tts_play.sh '{text.replace("'", "'\\''") or '你好'}'"
-            )
+            if url:
+                command = f"miplayer -f '{url}'"
+            else:
+                safe_text = (text or "你好").replace("'", "'\\''")
+                command = f"/usr/sbin/tts_play.sh '{safe_text}'"
             res = await self.run_shell(command, timeout=timeout)
             return res.exit_code == 0
 

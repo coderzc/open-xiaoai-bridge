@@ -4,6 +4,7 @@ import threading
 import time
 
 from core.ref import get_app, get_xiaoai, get_xiaozhi, set_kws
+from core.services.audio.kws.doubao import DoubaoWakeupDetector
 from core.services.audio.kws.sherpa import SherpaOnnx
 from core.services.audio.stream import MyAudio
 from core.services.audio.vad.silero import Silero
@@ -41,6 +42,15 @@ class _KWS:
         kws_config = self.config_manager.get_app_config("kws", {})
         min_silence_ms = kws_config.get("min_silence_duration", 480)
         self.vad_min_silence_frames = int(min_silence_ms / self.frame_duration_ms)
+        wakeup_cfg = self.config_manager.get_app_config("wakeup", {}) or {}
+        provider = wakeup_cfg.get("provider", "local")
+        self.wakeup_provider = str(provider or "local").strip().lower()
+        if self.wakeup_provider not in {"local", "doubao"}:
+            logger.warning(
+                f"未知 wakeup.provider={provider!r}，回退到 local",
+                module="KWS",
+            )
+            self.wakeup_provider = "local"
 
     def _on_config_reload(self, *_args):
         """配置重载后刷新运行时参数。"""
@@ -65,7 +75,17 @@ class _KWS:
         keywords_score = config.get_app_config("kws.keywords_score", 2.0)
         keywords_threshold = config.get_app_config("kws.keywords_threshold", 0.2)
         min_silence_ms = config.get_app_config("kws.min_silence_duration", 480)
-        logger.kws_event("关键词唤醒服务启动", f"关键词:[score:{keywords_score}, threshold:{keywords_threshold}], VAD:[threshold:{self.vad_threshold}, min_silence:{min_silence_ms}ms]")
+        if self.wakeup_provider == "doubao":
+            doubao_cfg = config.get_app_config("wakeup.doubao", {}) or {}
+            logger.kws_event(
+                "关键词唤醒服务启动",
+                (
+                    f"provider:doubao, VAD:[threshold:{self.vad_threshold}, min_silence:{min_silence_ms}ms], "
+                    f"Doubao:[mode:{doubao_cfg.get('mode', 'rolling_window')}, asr_provider:{doubao_cfg.get('asr_provider', 'openai_compatible')}, window:{doubao_cfg.get('window_ms', 3500)}ms, check_interval:{doubao_cfg.get('check_interval_ms', 1800)}ms, min_gap:{doubao_cfg.get('min_gap_ms', 1500)}ms, min_audio_bytes:{doubao_cfg.get('min_audio_bytes', 20000)}, max_audio_ms:{doubao_cfg.get('max_audio_ms', 2000)}ms, max_audio_bytes:{doubao_cfg.get('max_audio_bytes', 64000)}]"
+                ),
+            )
+        else:
+            logger.kws_event("关键词唤醒服务启动", f"provider:local, 关键词:[score:{keywords_score}, threshold:{keywords_threshold}], VAD:[threshold:{self.vad_threshold}, min_silence:{min_silence_ms}ms]")
 
     def get_file_path(self, file_name: str):
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -78,7 +98,8 @@ class _KWS:
         self.paused = False
 
     def _detection_loop(self):
-        SherpaOnnx.start()
+        detector = SherpaOnnx if self.wakeup_provider == "local" else DoubaoWakeupDetector
+        detector.start()
         self.stream.start_stream()
         while True:
             # 读取缓冲区音频数据
@@ -110,11 +131,16 @@ class _KWS:
                     self.vad_active = True
                     self.vad_start_time = time.time()
                     logger.debug("检测到语音，开始 KWS 检测", module="KWS")
+                    if hasattr(detector, "on_utterance_start"):
+                        detector.on_utterance_start()
                 
                 self.vad_silence_frames = 0
                 
                 # 只在有语音时才进行 KWS 检测
-                result = SherpaOnnx.kws(frames)
+                if hasattr(detector, "on_utterance_frame"):
+                    result = detector.on_utterance_frame(frames, True)
+                else:
+                    result = detector.kws(frames)
                 if result:
                     logger.wakeup(result, module="KWS")
                     self.on_message(result)
@@ -130,7 +156,10 @@ class _KWS:
                     # 在激活状态下，允许一定的静音间隙
                     if self.vad_silence_frames <= self.vad_min_silence_frames:
                         # 继续将音频送入 KWS，允许短暂的静音
-                        result = SherpaOnnx.kws(frames)
+                        if hasattr(detector, "on_utterance_frame"):
+                            result = detector.on_utterance_frame(frames, False)
+                        else:
+                            result = detector.kws(frames)
                         if result:
                             logger.wakeup(result, module="KWS")
                             self.on_message(result)
@@ -147,12 +176,19 @@ class _KWS:
                             ),
                             module="KWS",
                         )
+                        final_result = None
+                        if hasattr(detector, "on_utterance_end"):
+                            final_result = detector.on_utterance_end()
                         self.vad_active = False
                         self.vad_silence_frames = 0
-                        # Reset Sherpa stream to discard partial recognition state,
+                        if final_result:
+                            logger.wakeup(final_result, module="KWS")
+                            self.on_message(final_result)
+                        # Reset detector state to discard partial recognition state,
                         # preventing leftover audio from the previous utterance
                         # from combining with the next one.
-                        SherpaOnnx.reset()
+                        if hasattr(detector, "reset"):
+                            detector.reset()
 
     def on_message(self, text: str):
         loop = get_app().loop if get_app() else get_xiaoai().async_loop

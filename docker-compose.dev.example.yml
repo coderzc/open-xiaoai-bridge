@@ -1,0 +1,20 @@
+services:
+  open-xiaoai-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: local/open-xiaoai-bridge:dev
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - LOGLEVEL=INFO
+      - API_SERVER_ENABLE=1
+      - API_SERVER_HOST=0.0.0.0
+      - OPENCLAW_ENABLE=1
+    volumes:
+      - ./config.py:/app/config.py
+      - ./openclaw:/app/openclaw
+      - ./core:/app/core
+      - ./models:/app/core/models
+    stdin_open: true
+    tty: true
