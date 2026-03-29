@@ -52,7 +52,6 @@ class _DoubaoWakeupDetector:
         self.max_audio_ms = int(doubao_cfg.get("max_audio_ms", 2000) or 0)
         self.debug_cfg = self.config.get_app_config("audio_debug", {}) or {}
         self.debug_context_cfg = ((self.debug_cfg.get("contexts", {}) or {}).get("wakeup", {}) or {}) if isinstance(self.debug_cfg, dict) else {}
-        self.input_gain = float(self.debug_context_cfg.get("input_gain", doubao_cfg.get("input_gain", 1.0)) or 1.0)
         self.debug_save_audio = bool(self.debug_cfg.get("enabled", False) and self.debug_context_cfg.get("save_wav", False))
         self.debug_audio_dir = Path(self.debug_context_cfg.get("dir", "/app/core/debug_wakeup_audio"))
         self.debug_max_files = int(self.debug_context_cfg.get("max_files", 10))
@@ -97,21 +96,6 @@ class _DoubaoWakeupDetector:
     def _sanitize_label(self, value: str) -> str:
         safe = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._-]+", "_", str(value or ""))
         return safe.strip("._-") or "unknown"
-
-    def _apply_input_gain(self, pcm_bytes: bytes) -> bytes:
-        if not pcm_bytes or abs(self.input_gain - 1.0) < 1e-6:
-            return pcm_bytes
-        samples = array.array("h")
-        samples.frombytes(pcm_bytes)
-        gain = self.input_gain
-        for i, sample in enumerate(samples):
-            amplified = int(round(sample * gain))
-            if amplified > 32767:
-                amplified = 32767
-            elif amplified < -32768:
-                amplified = -32768
-            samples[i] = amplified
-        return samples.tobytes()
 
     def _cleanup_debug_audio(self):
         if not self.debug_audio_dir.exists():
@@ -171,7 +155,7 @@ class _DoubaoWakeupDetector:
             )
             return None
 
-        pcm_for_asr = self._apply_input_gain(pcm_bytes)
+        pcm_for_asr = pcm_bytes
         try:
             text = (
                 ASRManager.asr(

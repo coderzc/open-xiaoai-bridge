@@ -23,6 +23,15 @@ class _ASRManager:
                 return context_cfg
         return {}
 
+    def _context_cfg(self, context: str) -> dict:
+        config = ConfigManager.instance()
+        contexts = config.get_app_config("asr.contexts", {}) or {}
+        if isinstance(contexts, dict):
+            context_cfg = contexts.get(context, {}) or {}
+            if isinstance(context_cfg, dict):
+                return context_cfg
+        return {}
+
     def _apply_input_gain(self, pcm_bytes: bytes, gain: float) -> bytes:
         if not pcm_bytes or abs(gain - 1.0) < 1e-6:
             return pcm_bytes
@@ -131,8 +140,8 @@ class _ASRManager:
             if fallback_provider_override not in (None, "", False)
             else self._fallback_provider(context=context)
         )
-        context_debug_cfg = self._context_debug_cfg(context)
-        gain = float(context_debug_cfg.get("input_gain", 1.0) or 1.0)
+        context_cfg = self._context_cfg(context)
+        gain = float(context_cfg.get("input_gain", 1.0) or 1.0)
         pcm_for_asr = self._apply_input_gain(pcm_bytes, gain)
 
         try:

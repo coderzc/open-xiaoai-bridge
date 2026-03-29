@@ -214,12 +214,12 @@ APP_CONFIG = {
                 "provider": "openai_compatible",
                 # 该场景识别失败后的回退引擎（可选）
                 "fallback_provider": None,
+                # 唤醒后内容识别阶段的输入增益（同时适用于本地 Sherpa 和 OpenAI 兼容 STT）
+                "input_gain": 8.0,
                 # 唤醒后单轮内容识别允许录制的最大时长（毫秒）；超过后直接丢弃，不送识别。默认 30 秒。
                 "max_speech_ms": 30000,
                 # 唤醒后单轮内容识别允许缓存的最大 PCM 字节数；超过后直接丢弃，不送识别。
                 "max_audio_bytes": 960000,
-                # 内容识别阶段的输入增益（对 provider=sherpa / openai_compatible 都生效）
-                "input_gain": 8.0,
             },
             # 唤醒词识别（仅 wakeup.provider="doubao" 时生效；若同时配置 wakeup.doubao.asr_provider，则优先使用后者）
             "wakeup": {
@@ -229,7 +229,7 @@ APP_CONFIG = {
                 "provider": "openai_compatible",
                 # 该场景识别失败后的回退引擎（可选）
                 "fallback_provider": None,
-                # 唤醒检测阶段的输入增益（对 provider=sherpa / openai_compatible 都生效）
+                # 唤醒阶段送检前的输入增益（仅影响基于 ASR 的唤醒，不影响唤醒后内容识别）
                 "input_gain": 8.0,
             },
         },
