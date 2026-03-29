@@ -172,8 +172,6 @@ APP_CONFIG = {
             "utterance_end_silence_frames": 12,
             # utterance_end 模式：单段语音最多累计多长时间（毫秒）
             "utterance_max_ms": 5000,
-            # 唤醒阶段送检前的音量增益（仅影响基于 ASR 的唤醒，不影响唤醒后内容识别）
-            "input_gain": 8.0,
         },
         # 静音多久后自动退出唤醒（秒）
         "timeout": 20,
@@ -220,6 +218,8 @@ APP_CONFIG = {
                 "max_speech_ms": 30000,
                 # 唤醒后单轮内容识别允许缓存的最大 PCM 字节数；超过后直接丢弃，不送识别。
                 "max_audio_bytes": 960000,
+                # 内容识别阶段的输入增益（对 provider=sherpa / openai_compatible 都生效）
+                "input_gain": 8.0,
             },
             # 唤醒词识别（仅 wakeup.provider="doubao" 时生效；若同时配置 wakeup.doubao.asr_provider，则优先使用后者）
             "wakeup": {
@@ -229,6 +229,8 @@ APP_CONFIG = {
                 "provider": "openai_compatible",
                 # 该场景识别失败后的回退引擎（可选）
                 "fallback_provider": None,
+                # 唤醒检测阶段的输入增益（对 provider=sherpa / openai_compatible 都生效）
+                "input_gain": 8.0,
             },
         },
         # ASR 模型名：
@@ -260,8 +262,6 @@ APP_CONFIG = {
                 "dir": "/app/core/debug_wakeup_audio",
                 # 最多保留多少条唤醒词阶段 wav，超过后删除更旧文件
                 "max_files": 10,
-                # 唤醒词识别阶段的统一输入增益（仅影响基于 ASR 的唤醒检测）
-                "input_gain": 8.0,
             },
             "conversation": {
                 # 是否保存唤醒后内容识别阶段的 wav
@@ -270,8 +270,6 @@ APP_CONFIG = {
                 "dir": "/app/core/debug_conversation_audio",
                 # 最多保留多少条内容识别阶段 wav，超过后删除更旧文件
                 "max_files": 10,
-                # 唤醒后内容识别阶段的统一输入增益（同时适用于本地 Sherpa 和 OpenAI 兼容 STT）
-                "input_gain": 8.0,
             },
         },
     },
