@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.5 - 2026-03-29
+
+### 重点更新
+
+- 新增小爱原生 ASR 模式 (`OPENCLAW_XIAOAI_NATIVE_ASR`)，可在 OpenClaw 连续对话中使用小爱自带的语音识别能力，降低对离线 ASR 模型的依赖。
+- 新增可配置的音频输入增益 (`AUDIO_INPUT_GAIN`)，支持调节麦克风输入音量以优化唤醒词识别灵敏度。
+- 新增音频输入开关 (`AUDIO_INPUT_ENABLE`)，可在不需要音频输入时禁用以节省系统资源。
+- 新增发送消息提示音，改善 OpenClaw 连续对话的交互体验。
+
+### 修复与优化
+
+- 修复 OpenClaw 小爱原生 ASR 模式下的超时处理，确保桥接超时配置被正确遵循。
+- 优化环境变量命名：`OPENCLAW_ENABLED` → `OPENCLAW_ENABLE`（保留向后兼容，新变量优先）。
+- 优化 CMake 启动脚本，修复构建相关问题。
+
+### 文档更新
+
+- 补充音频输入增益配置的 FAQ 说明。
+- 优化 Docker FAQ 格式，统一文档风格。
+- 更新 OpenClaw 连接说明文档。
+
+### Full Changelog
+
+- https://github.com/coderzc/open-xiaoai-bridge/compare/v1.0.4...v1.0.5
+
 ## v1.0.4 - 2026-03-26
 
 ### 重点更新
