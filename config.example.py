@@ -65,8 +65,8 @@ async def before_wakeup(speaker, text, source, app):
         #     return "openclaw"
 
         # Route to OpenClaw Agent by wake word
-        if "龙虾" in text:
-            await speaker.play(text="龙虾来了")
+        if "螃蟹" in text:
+            await speaker.play(text="螃蟹来了")
             return "openclaw"
 
         if "小智" in text:
@@ -82,7 +82,7 @@ async def before_wakeup(speaker, text, source, app):
         #     await speaker.abort_xiaoai()
         #     return "openclaw"
 
-        if text == "召唤龙虾":
+        if text == "召唤螃蟹":
             await speaker.abort_xiaoai()
             return "openclaw"  # OpenClaw continuous conversation
 
@@ -90,16 +90,16 @@ async def before_wakeup(speaker, text, source, app):
             await speaker.abort_xiaoai()
             return "xiaozhi"  # XiaoZhi AI
 
-        if "让龙虾" in text:
+        if "请" in text:
             await speaker.abort_xiaoai()
             # One-shot: send to OpenClaw and play the reply via TTS
-            await app.send_to_openclaw_and_play_reply(text.replace("让龙虾", ""))
+            await app.send_to_openclaw_and_play_reply(text.replace("请", ""))
             return None  # No further handling by the framework
 
-        if "告诉龙虾" in text:
+        if "告诉螃蟹" in text:
             await speaker.abort_xiaoai()
             # Fire-and-forget: let the Agent decide when/how to reply
-            await app.send_to_openclaw(text.replace("告诉龙虾", ""))
+            await app.send_to_openclaw_and_play_reply(text.replace("告诉螃蟹", ""))
             return None
 
 
@@ -126,20 +126,53 @@ async def after_wakeup(speaker, source=None, session_key=None):
         #     await speaker.play(text="小美，再见")
         # else:
         #     await speaker.play(text="再见")
-        await speaker.play(text="龙虾，再见")
+        await speaker.play(text="再见")
     if source == "xiaozhi":
-        await speaker.play(text="小智，再见")
+        await speaker.play(text="再见")
 
 APP_CONFIG = {
     "wakeup": {
+        # 唤醒检测方式：
+        #   - "local": 使用本地 Sherpa KWS 模型直接做关键词唤醒
+        #   - "doubao": 使用基于 ASR 的唤醒检测（可选本地 Sherpa / OpenAI 兼容 STT）
+        "provider": "doubao",
         # 自定义唤醒词列表（英文字母要全小写）
         "keywords": [
             "你好小智",
             "小智小智",
             "hi open claw",
-            "你好龙虾",
-            "龙虾你好",
+            "你好螃蟹",
+            "螃蟹你好",
+            "螃蟹",
+            "螃蟹螃蟹",
         ],
+        # 基于 ASR 的唤醒检测参数（仅 wakeup.provider="doubao" 时生效）
+        "doubao": {
+            # 唤醒识别模式：
+            #   - "rolling_window": 现有方式，滚动窗口周期性送检
+            #   - "utterance_end": 等一整段语音结束后再送检一次
+            "mode": "utterance_end",
+            # 唤醒词识别阶段使用的 ASR 引擎：
+            #   - "sherpa": 本地离线识别
+            #   - "openai_compatible": 兼容 OpenAI /audio/transcriptions 的 STT（当前可走代理到豆包）
+            "asr_provider": "openai_compatible",
+            # rolling_window 模式：每次送去识别的音频窗口大小（毫秒）
+            "window_ms": 3500,
+            # rolling_window 模式：两次检测之间的最小间隔（毫秒）
+            "check_interval_ms": 1800,
+            # 一次命中后，下次允许再次触发的最小间隔（毫秒）
+            "min_gap_ms": 1500,
+            # 小于该 PCM 字节数的音频直接跳过，不送识别
+            "min_audio_bytes": 20000,
+            # 单次唤醒送检允许的最大音频时长（毫秒）；超过后直接丢弃，不送识别。默认 2 秒。
+            "max_audio_ms": 2000,
+            # 单次唤醒送检允许的最大 PCM 字节数；超过后直接丢弃，不送识别。
+            "max_audio_bytes": 64000,
+            # utterance_end 模式：连续静音达到多少帧后视为这一整段语音已经结束
+            "utterance_end_silence_frames": 12,
+            # utterance_end 模式：单段语音最多累计多长时间（毫秒）
+            "utterance_max_ms": 5000,
+        },
         # 静音多久后自动退出唤醒（秒）
         "timeout": 20,
         # 语音识别结果回调
@@ -149,9 +182,9 @@ APP_CONFIG = {
     },
     "kws": {
         # 唤醒词置信度加成（越高越难误触发，越低越灵敏）
-        "keywords_score": 2.0,
+        "keywords_score": 0.1,
         # 唤醒词检测阈值（越低越灵敏，越高越难触发）
-        "keywords_threshold": 0.2,
+        "keywords_threshold": 0.1,
         # 唤醒词检测时的最小静默时长（ms），静默超过该时长则判定为说完
         "min_silence_duration": 480,
     },
@@ -161,23 +194,96 @@ APP_CONFIG = {
         # 最小语音时长（ms）
         "min_speech_duration": 250,
         # 最小静默时长（ms）
-        "min_silence_duration": 500,
+        "min_silence_duration": 1000,
     },
     "asr": {
-        # 支持 "sense_voice"（默认）或 "paraformer"
-        "model": "sense_voice",
+        # 默认 ASR provider：
+        #   - "sherpa": 本地离线识别
+        #   - "openai_compatible": 调用兼容 OpenAI /audio/transcriptions 的在线识别接口
+        # 这是全局默认值；若某个场景在 contexts 中单独配置，则以场景配置为准
+        "provider": "openai_compatible",
+        # 主 provider 失败后的回退 provider（可选）
+        "fallback_provider": None,
+        # 按场景分别指定 ASR provider
+        "contexts": {
+            # 唤醒后的内容识别（即进入连续对话后说的话）
+            "conversation": {
+                # 内容识别引擎：
+                #   - "sherpa": 本地离线识别
+                #   - "openai_compatible": 兼容 OpenAI STT 的在线识别（当前可走代理到豆包）
+                "provider": "openai_compatible",
+                # 该场景识别失败后的回退引擎（可选）
+                "fallback_provider": None,
+                # 唤醒后内容识别阶段的输入增益（同时适用于本地 Sherpa 和 OpenAI 兼容 STT）
+                "input_gain": 8.0,
+                # 唤醒后单轮内容识别允许录制的最大时长（毫秒）；超过后直接丢弃，不送识别。默认 30 秒。
+                "max_speech_ms": 30000,
+                # 唤醒后单轮内容识别允许缓存的最大 PCM 字节数；超过后直接丢弃，不送识别。
+                "max_audio_bytes": 960000,
+            },
+            # 唤醒词识别（仅 wakeup.provider="doubao" 时生效；若同时配置 wakeup.doubao.asr_provider，则优先使用后者）
+            "wakeup": {
+                # 唤醒词识别引擎：
+                #   - "sherpa": 本地离线识别
+                #   - "openai_compatible": 兼容 OpenAI STT 的在线识别（当前可走代理到豆包）
+                "provider": "openai_compatible",
+                # 该场景识别失败后的回退引擎（可选）
+                "fallback_provider": None,
+                # 唤醒阶段送检前的输入增益（仅影响基于 ASR 的唤醒，不影响唤醒后内容识别）
+                "input_gain": 8.0,
+            },
+        },
+        # ASR 模型名：
+        #   - provider=sherpa 时：本地模型名（如 "sense_voice" / "paraformer"）
+        #   - provider=openai_compatible 时：上游兼容接口接收的 model 字段
+        "model": "bigmodel",
+        # 在线识别超时（秒）
+        "timeout": 20,
+        # 文本替换规则（本地/在线都会生效）
+        "replacements": {},
+        # OpenAI 兼容 STT 配置
+        "openai_compatible": {
+            # 兼容 OpenAI 语音识别接口的基础地址
+            "base_url": "http://127.0.0.1:8787",
+            # 兼容接口所需的 Bearer Token；本地代理场景可填占位值
+            "api_key": "YOUR_OPENAI_COMPATIBLE_API_KEY",
+        },
+    },
+    "audio_debug": {
+        # 是否开启音频调试模式：
+        #   - False：不保存调试 wav
+        #   - True：按下面各场景设置保存调试 wav
+        "enabled": True,
+        "contexts": {
+            "wakeup": {
+                # 是否保存唤醒词识别阶段的 wav
+                "save_wav": True,
+                # 唤醒词阶段调试 wav 保存目录
+                "dir": "/app/core/debug_wakeup_audio",
+                # 最多保留多少条唤醒词阶段 wav，超过后删除更旧文件
+                "max_files": 10,
+            },
+            "conversation": {
+                # 是否保存唤醒后内容识别阶段的 wav
+                "save_wav": True,
+                # 唤醒后内容识别阶段调试 wav 保存目录
+                "dir": "/app/core/debug_conversation_audio",
+                # 最多保留多少条内容识别阶段 wav，超过后删除更旧文件
+                "max_files": 10,
+            },
+        },
     },
     "xiaozhi": {
         "OTA_URL": "http://127.0.0.1:8003/xiaozhi/ota/",
         "WEBSOCKET_URL": "ws://127.0.0.1:8000/xiaozhi/v1/",
-        "WEBSOCKET_ACCESS_TOKEN": "", #（可选）一般用不到这个值
-        "DEVICE_ID": "", #（可选）默认自动生成
-        "VERIFICATION_CODE": "", # 首次登陆时，验证码会在这里更新
+        "WEBSOCKET_ACCESS_TOKEN": "",
+        "DEVICE_ID": "YOUR_XIAOZHI_DEVICE_ID",
+        "VERIFICATION_CODE": "",
     },
     "xiaoai": {
         "continuous_conversation_mode": True,
         "exit_command_keywords": ["停止", "退下", "退出", "下去吧"],
-        "max_listening_retries": 2,  # 最多连续重新唤醒次数
+        "max_listening_retries": 2,
         "exit_prompt": "再见，主人",
         "continuous_conversation_keywords": ["开启连续对话", "启动连续对话", "我想跟你聊天"]
     },
@@ -187,17 +293,17 @@ APP_CONFIG = {
             # 豆包语音合成 API 配置
             # 文档地址: https://www.volcengine.com/docs/6561/1598757?lang=zh
             # 产品地址: https://www.volcengine.com/docs/6561/1871062
-            "app_id": "xxxx",         # 你的 App ID
-            "access_key": "xxxxxx",       # 你的 Access Key
-            "default_speaker": "zh_female_vv_uranus_bigtts",  # 音色 https://www.volcengine.com/docs/6561/1257544?lang=zh
-            "audio_format": "pcm",  # 推荐默认值：局域网稳定环境下首音更快、播放更顺
-            "stream": True,  # 推荐默认值：边合成边播放，首音延迟更低
+            "app_id": "YOUR_DOUBAO_APP_ID",
+            "access_key": "YOUR_DOUBAO_ACCESS_KEY",
+            "default_speaker": "saturn_zh_female_keainvsheng_tob",
+            "audio_format": "pcm",
+            "stream": True,
         }
     },
     # OpenClaw Configuration
     "openclaw": {
-        "url": "ws://127.0.0.1:18789",  # OpenClaw WebSocket 地址
-        "token": "your_openclaw_token",  # OpenClaw 认证令牌
+        "url": "ws://127.0.0.1:18789",
+        "token": "YOUR_OPENCLAW_TOKEN",
         # 输入模式：
         #   - "local_asr": 现有链路，使用本地 VAD + SherpaASR
         #   - "xiaoai_asr": 实验链路，唤醒小爱后接管原生 ASR 结果给 OpenClaw
@@ -207,10 +313,10 @@ APP_CONFIG = {
         #   rest:    会话标识，可自由命名，用于区分不同来源/场景 （默认为 open-xiaoai-bridge)
         # 也可在运行时动态切换（下一条消息即刻生效，无需重连）：
         #   app.set_openclaw_session_key("agent:assistant:open-xiaoai-bridge")
-        "session_key": "agent:main:open-xiaoai-bridge",
-        "identity_path": "/app/openclaw/identity/device.json",  # 设备身份文件路径；容器部署时建议挂载持久化目录
-        "tts_speed": 1.0,  # TTS 语速 (0.5-2.0)，仅豆包 TTS 生效，小爱原生 TTS 不支持调速
-        "tts_speaker": "xiaoai",  # "xiaoai" = 小爱原生 TTS；填豆包音色 ID 则用豆包 TTS；不设置则使用 tts.doubao.default_speaker
+        "session_key": "agent:speaker:open-xiaoai-bridge",
+        "identity_path": "/app/openclaw/identity/device.json",
+        "tts_speed": 1.0,
+        "tts_speaker": "YOUR_TTS_SPEAKER_OR_XIAOAI",
         # 可按 agentId 单独覆盖音色，优先级高于 tts_speaker
         # agentId 来自 session_key，格式为：agent:<agentId>:<rest>
         # 示例：
@@ -220,12 +326,12 @@ APP_CONFIG = {
         #     "butler": "xiaoai",
         # },
         "agent_tts_speakers": {},
-        "response_timeout": 120,  # 等待 OpenClaw agent 响应的超时时间（秒）
-        "exit_keywords": ["退出", "停止", "再见"],  # 退出连续对话的关键词
+        "response_timeout": 120,
+        "exit_keywords": ["退出", "停止", "再见"],
         # rule_prompt: 用于「自动播放」和「连续对话」场景
         #   - send_to_openclaw_and_play_reply() 会自动追加
         #   - OpenClawConversationController 会自动追加
-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
+        "rule_prompt": "在客厅，请返回300字以内的纯文字信息",
         # rule_prompt_for_skill: 用于「Agent 自主播报」场景（方式三）
         #   - send_to_openclaw() 会自动追加
         #   - 告诉 Agent 需要调用 xiaoai-tts skill 来播报，因为服务端不会自动播放

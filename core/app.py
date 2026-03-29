@@ -187,10 +187,10 @@ class MainApp:
                     "local_asr",
                 )
                 if input_mode == "local_asr":
-                    from core.services.audio.asr.sherpa import SherpaASR
+                    from core.services.audio.asr import ASRManager
 
                     threading.Thread(
-                        target=SherpaASR._ensure_loaded,
+                        target=ASRManager.warmup,
                         daemon=True,
                         name="asr-warmup",
                     ).start()

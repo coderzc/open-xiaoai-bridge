@@ -57,16 +57,21 @@
 
 ### 🐳 Docker Compose（推荐）
 
-模型文件解压到 `./models` 目录，然后下载配置并启动：
+模型文件解压到 `./models` 目录，然后下载示例配置并启动：
 
 ```bash
-# 下载配置文件
-curl -O https://raw.githubusercontent.com/coderzc/open-xiaoai-bridge/main/config.py
+# 下载示例配置文件
+curl -O https://raw.githubusercontent.com/coderzc/open-xiaoai-bridge/main/config.example.py
 curl -O https://raw.githubusercontent.com/coderzc/open-xiaoai-bridge/main/docker-compose.yml
+
+# 复制一份本地配置（此文件已加入 .gitignore，不会被提交）
+cp config.example.py config.py
 
 # 按需修改 config.py 和 docker-compose.yml，然后启动
 docker compose up -d
 ```
+
+> `config.example.py` 用于保存默认配置模板；实际部署时请复制为本地 `config.py` 后再修改，不要直接把私有配置提交回仓库。
 
 > **💡 国内镜像加速**：如果拉取镜像太慢，可将 `docker-compose.yml` 中的镜像改为：
 > ```yaml
@@ -89,6 +94,7 @@ volumes:
 ```bash
 git clone https://github.com/coderzc/open-xiaoai-bridge.git
 cd open-xiaoai-bridge
+cp config.example.py config.py
 
 # 依赖: uv, Rust
 # Linux 还需要: pkg-config, patchelf
@@ -96,6 +102,8 @@ cd open-xiaoai-bridge
 # 启动（按需设置环境变量）
 API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
 ```
+
+首次启动前请先复制 `config.example.py` 为本地 `config.py`，再填入你自己的配置。`config.py` 已加入 `.gitignore`，不会默认进入版本控制。
 
 ### ⚙️ 环境变量
 
@@ -652,11 +660,14 @@ APP_CONFIG = {
 
 2. **如何切换 ASR 语音识别模型？**
 
-    仅 `openclaw.input_mode = "local_asr"` 时，本地离线 ASR 配置才会生效。在 `config.py` 中配置：
+    仅 `openclaw.input_mode = "local_asr"` 时，本地/在线 ASR 配置才会生效。在 `config.py` 中配置：
+
+    **方式 A：本地离线 ASR（默认）**
 
     ```python
     APP_CONFIG = {
         "asr": {
+            "provider": "sherpa",
             "model": "sense_voice",  # "sense_voice"（默认）或 "paraformer"
         },
     }
@@ -668,6 +679,25 @@ APP_CONFIG = {
     | `paraformer` | [Paraformer-Trilingual](https://github.com/modelscope/FunASR) | 专注语音转写的工业级非自回归模型，支持中文/英文/粤语，中文识别精度高 |
 
     将对应模型目录放到 `core/models/`（Docker 部署放 `./models/`）下即可，不配置默认使用 `sense_voice`。
+
+    **方式 B：在线兼容 ASR（例如本地豆包代理）**
+
+    ```python
+    APP_CONFIG = {
+        "asr": {
+            "provider": "openai_compatible",
+            "fallback_provider": "sherpa",  # 可选：在线失败时回退本地识别
+            "model": "bigmodel",            # 发送给兼容接口的 model 字段
+            "timeout": 20,
+            "openai_compatible": {
+                "base_url": "http://127.0.0.1:8787",
+                "api_key": "dummy",
+            },
+        },
+    }
+    ```
+
+    `openai_compatible` 模式会把本地捕获的 PCM 音频自动封装为 WAV，再请求兼容 OpenAI `POST /audio/transcriptions` 的接口。这样可以无缝接入本地代理，再由代理桥接到豆包 ASR 等在线服务。
 
 3. **如何打断 AI 的回答？**
 

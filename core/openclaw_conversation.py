@@ -23,7 +23,7 @@ import open_xiaoai_server
 
 from core.openclaw import OpenClawManager
 from core.ref import get_speaker, get_vad
-from core.services.audio.asr.sherpa import SherpaASR
+from core.services.audio.asr import ASRManager
 from core.utils.config import ConfigManager
 
 _NOTIFY_SOUND_PATH = os.path.join(
@@ -69,6 +69,9 @@ class OpenClawConversationController:
 
     def _cfg(self, key: str, default=None):
         return self.config.get_app_config(f"openclaw.{key}", default)
+
+    def _conversation_asr_cfg(self, key: str, default=None):
+        return self.config.get_app_config(f"asr.contexts.conversation.{key}", default)
 
     @property
     def exit_keywords(self) -> list[str]:
@@ -199,7 +202,7 @@ class OpenClawConversationController:
         )
 
         # 2. ASR: convert speech to text
-        text = SherpaASR.asr(speech_bytes, sample_rate=16000)
+        text = ASRManager.asr(speech_bytes, sample_rate=16000)
         if not text:
             logger.debug("ASR empty, retrying", module="OpenClaw Conv")
             return "continue"
@@ -288,6 +291,8 @@ class OpenClawConversationController:
         self._vad_future = self._loop.create_future()
         recording_frames: list[bytes] = []
         is_recording = False
+        max_speech_ms = int(self._conversation_asr_cfg("max_speech_ms", 30000) or 0)
+        max_speech_bytes = int(self._conversation_asr_cfg("max_audio_bytes", 0) or 0)
 
         original_on_speech = EventManager.on_speech
         original_on_silence = EventManager.on_silence
@@ -316,13 +321,45 @@ class OpenClawConversationController:
         _orig_handle_silence = vad._handle_silence_frame
 
         def _recording_speech_frame(frames):
+            nonlocal is_recording
             if is_recording:
                 recording_frames.append(bytes(frames))
+                total_bytes = sum(len(x) for x in recording_frames)
+                duration_ms = total_bytes * 1000 / (16000 * 2)
+                if (max_speech_bytes > 0 and total_bytes > max_speech_bytes) or (
+                    max_speech_ms > 0 and duration_ms > max_speech_ms
+                ):
+                    is_recording = False
+                    logger.info(
+                        f"[OpenClaw Conv] 语音片段超上限，直接丢弃: duration={duration_ms:.0f}ms, bytes={total_bytes}",
+                        module="OpenClaw Conv",
+                    )
+                    recording_frames.clear()
+                    vad.pause()
+                    if self._vad_future and not self._vad_future.done():
+                        self._loop.call_soon_threadsafe(self._vad_future.set_result, None)
+                    return
             _orig_handle_speech(frames)
 
         def _recording_silence_frame(frames):
+            nonlocal is_recording
             if is_recording:
                 recording_frames.append(bytes(frames))
+                total_bytes = sum(len(x) for x in recording_frames)
+                duration_ms = total_bytes * 1000 / (16000 * 2)
+                if (max_speech_bytes > 0 and total_bytes > max_speech_bytes) or (
+                    max_speech_ms > 0 and duration_ms > max_speech_ms
+                ):
+                    is_recording = False
+                    logger.info(
+                        f"[OpenClaw Conv] 语音片段超上限，直接丢弃: duration={duration_ms:.0f}ms, bytes={total_bytes}",
+                        module="OpenClaw Conv",
+                    )
+                    recording_frames.clear()
+                    vad.pause()
+                    if self._vad_future and not self._vad_future.done():
+                        self._loop.call_soon_threadsafe(self._vad_future.set_result, None)
+                    return
             _orig_handle_silence(frames)
 
         EventManager.on_speech = _on_speech_hook
