@@ -28,6 +28,8 @@ class XiaoAI:
     async_loop: asyncio.AbstractEventLoop = None
     config_manager = ConfigManager.instance()
     conversation = XiaoAIConversationController()
+    _input_gain_enabled = False
+    _input_gain = 1.0
     _async_loop_ready = threading.Event()
     _external_wakeup_keywords: set[str] = set()
     _suppressed_dialog_ids: set[str] = set()
@@ -41,6 +43,13 @@ class XiaoAI:
         cls.conversation.apply_runtime_config(
             cls.config_manager.get_app_config("xiaoai", {})
         )
+        gain = cls.config_manager.get_app_config("audio_input.gain", 1.0)
+        try:
+            gain = float(gain)
+        except (TypeError, ValueError):
+            gain = 1.0
+        cls._input_gain = max(1.0, min(gain, 8.0))
+        cls._input_gain_enabled = cls._input_gain > 1.0
         wakeup_keywords = cls.config_manager.get_app_config("wakeup.keywords", [])
         cls._external_wakeup_keywords = {
             cls._normalize_text(keyword)
@@ -100,7 +109,10 @@ class XiaoAI:
 
     @classmethod
     def on_input_data(cls, data: bytes):
-        audio_array = np.frombuffer(data, dtype=np.uint16)
+        audio_array = np.frombuffer(data, dtype=np.int16)
+        if cls._input_gain_enabled and audio_array.size > 0:
+            boosted = audio_array.astype(np.float32) * cls._input_gain
+            audio_array = np.clip(boosted, -32768, 32767).astype(np.int16)
         GlobalStream.input(audio_array.tobytes())
 
     @classmethod

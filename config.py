@@ -163,6 +163,10 @@ APP_CONFIG = {
         # 最小静默时长（ms）
         "min_silence_duration": 500,
     },
+    "audio_input": {
+        # Input gain multiplier before VAD/KWS/ASR. Use 1.0 to disable.
+        "gain": 1.0,
+    },
     "asr": {
         # 支持 "sense_voice"（默认）或 "paraformer"
         "model": "sense_voice",
