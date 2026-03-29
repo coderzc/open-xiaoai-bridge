@@ -40,6 +40,7 @@ models/
 .env.local
 
 # Local config / compose / notes
+config.py
 config-1.py
 config.local.py
 docker-compose.dev.yml
