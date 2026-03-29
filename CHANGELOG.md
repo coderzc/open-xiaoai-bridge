@@ -45,6 +45,7 @@ All notable changes to this project will be documented in this file.
 
 - 补充并整理项目文档说明，优化 README 的来源说明、致谢与相关文案表达。
 - 更新 LICENSE 中的版权声明，保留上游作者信息并补充当前项目维护者信息。
+- 更新 Docker 使用说明，改善 Windows 用户的部署体验。(#8 by @JackieQiang)
 
 ### Full Changelog
 
