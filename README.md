@@ -57,16 +57,21 @@
 
 ### 🐳 Docker Compose（推荐）
 
-模型文件解压到 `./models` 目录，然后下载配置并启动：
+模型文件解压到 `./models` 目录，然后下载示例配置并启动：
 
 ```bash
-# 下载配置文件
-curl -O https://raw.githubusercontent.com/coderzc/open-xiaoai-bridge/main/config.py
+# 下载示例配置文件
+curl -O https://raw.githubusercontent.com/coderzc/open-xiaoai-bridge/main/config.example.py
 curl -O https://raw.githubusercontent.com/coderzc/open-xiaoai-bridge/main/docker-compose.yml
+
+# 复制一份本地配置（此文件已加入 .gitignore，不会被提交）
+cp config.example.py config.py
 
 # 按需修改 config.py 和 docker-compose.yml，然后启动
 docker compose up -d
 ```
+
+> `config.example.py` 用于保存默认配置模板；实际部署时请复制为本地 `config.py` 后再修改，不要直接把私有配置提交回仓库。
 
 > **💡 国内镜像加速**：如果拉取镜像太慢，可将 `docker-compose.yml` 中的镜像改为：
 > ```yaml
@@ -89,6 +94,7 @@ volumes:
 ```bash
 git clone https://github.com/coderzc/open-xiaoai-bridge.git
 cd open-xiaoai-bridge
+cp config.example.py config.py
 
 # 依赖: uv, Rust
 # Linux 还需要: pkg-config, patchelf
@@ -96,6 +102,8 @@ cd open-xiaoai-bridge
 # 启动（按需设置环境变量）
 API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
 ```
+
+首次启动前请先复制 `config.example.py` 为本地 `config.py`，再填入你自己的配置。`config.py` 已加入 `.gitignore`，不会默认进入版本控制。
 
 ### ⚙️ 环境变量
 
