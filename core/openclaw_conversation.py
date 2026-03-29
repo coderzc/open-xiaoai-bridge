@@ -31,6 +31,11 @@ _NOTIFY_SOUND_PATH = os.path.join(
     "assets", "sounds", "tts_notify.mp3",
 )
 
+_SEND_SOUND_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "assets", "sounds", "send_notify.mp3",
+)
+
 def _load_notify_sound() -> bytes | None:
     """Decode tts_notify.mp3 to PCM at startup."""
     if not os.path.isfile(_NOTIFY_SOUND_PATH):
@@ -42,7 +47,19 @@ def _load_notify_sound() -> bytes | None:
     except Exception:
         return None
 
+def _load_send_sound() -> bytes | None:
+    """Decode send_notify.mp3 to PCM at startup."""
+    if not os.path.isfile(_SEND_SOUND_PATH):
+        return None
+    try:
+        with open(_SEND_SOUND_PATH, "rb") as f:
+            mp3_data = f.read()
+        return open_xiaoai_server.decode_audio(mp3_data, format="mp3", sample_rate=24000)
+    except Exception:
+        return None
+
 _NOTIFY_PCM = _load_notify_sound()
+_SEND_PCM = _load_send_sound()
 from core.utils.logger import logger
 
 
@@ -214,7 +231,12 @@ class OpenClawConversationController:
         full_text = text
         if OpenClawManager._rule_prompt:
             full_text = text + "\n" + OpenClawManager._rule_prompt
-        response = await OpenClawManager.send(full_text, wait_response=True)
+        # 先发出请求（不阻塞等回复），立即播"咻"给用户即时反馈，再等回复
+        # 注意：直接用 _send_and_track 而非 send(wait_response=False)，
+        # 后者会立即清掉 Future，导致后续 _wait_response 拿不到回复
+        run_id = await OpenClawManager._send_and_track(full_text)
+        await self._play_send_sound()
+        response = await OpenClawManager._wait_response(run_id) if run_id else None
         if response is None:
             logger.warning("No response from OpenClaw", module="OpenClaw Conv")
             speaker = get_speaker()
@@ -544,6 +566,20 @@ class OpenClawConversationController:
                 await asyncio.sleep(duration)
             except Exception as exc:
                 logger.debug(f"Notify sound error: {exc}", module="OpenClaw Conv")
+
+    async def _play_send_sound(self):
+        """发送消息给 OpenClaw 前播放音效（如"咻"）。"""
+        if not _SEND_PCM:
+            return
+        speaker = get_speaker()
+        if speaker:
+            try:
+                await speaker.play(buffer=_SEND_PCM)
+                # 等待播放完成：PCM 为 int16，24000Hz
+                duration = len(_SEND_PCM) / (24000 * 2)
+                await asyncio.sleep(duration)
+            except Exception as exc:
+                logger.debug(f"Send sound error: {exc}", module="OpenClaw Conv")
 
     async def _call_after_wakeup(self):
         """Call the user-defined after_wakeup hook with source='openclaw'."""

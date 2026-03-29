@@ -36,7 +36,9 @@ echo -e "${GREEN}✓ uv 已安装${NC}"
 # 2. 同步虚拟环境和依赖
 echo ""
 echo "正在同步虚拟环境和依赖..."
-if uv sync; then
+# CMAKE_POLICY_VERSION_MINIMUM=3.5: cmake 4.x 移除了对 < 3.5 的兼容，
+# audiopus_sys 的 CMakeLists.txt 版本声明过旧，需要此变量绕过检查
+if CMAKE_POLICY_VERSION_MINIMUM=3.5 uv sync; then
     echo -e "${GREEN}✓ 虚拟环境已就绪，依赖已安装${NC}"
 else
     echo -e "${RED}错误: 依赖安装失败${NC}"
