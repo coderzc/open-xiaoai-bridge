@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.6 - 2026-04-05
+
+### 重点更新
+
+- 新增 WebSocket Bearer Token 鉴权支持，可通过配置 `AUTH_TOKEN` 环境变量为 WebSocket 连接启用可选身份验证。
+- 连接日志新增鉴权失败原因输出，便于排查认证问题。
+
+### 修复与优化
+
+- 修复 agent 事件未按 `run_id` 过滤的问题，避免多次唤醒场景下的内存泄漏。
+- 优化 Docker 构建流程，拆分为并行原生架构构建 + manifest 合并，提升 CI 构建效率。
+
+### Full Changelog
+
+- https://github.com/coderzc/open-xiaoai-bridge/compare/v1.0.5...v1.0.6
+
 ## v1.0.5 - 2026-03-29
 
 ### 重点更新
