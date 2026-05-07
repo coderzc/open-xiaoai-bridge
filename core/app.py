@@ -4,6 +4,7 @@ This module manages the main application flow, coordinating between:
 - XiaoAI (Xiaomi speaker service)
 - XiaoZhi (AI conversation service)
 - OpenClaw (External integration)
+- OpenAI (OpenAI-compatible chat service)
 - Audio system (VAD, KWS, Codec)
 """
 
@@ -22,6 +23,7 @@ from core.services.protocols.typing import (
     EventType,
 )
 from core.openclaw import OpenClawManager
+from core.openai import OpenAIManager
 from core.services.api_server import APIServer
 
 
@@ -31,7 +33,12 @@ class MainApp:
     _instance = None
 
     @classmethod
-    def instance(cls, enable_xiaozhi: bool = True, enable_openclaw: bool = False):
+    def instance(
+        cls,
+        enable_xiaozhi: bool = True,
+        enable_openclaw: bool = False,
+        enable_openai: bool = False,
+    ):
         """Get singleton instance.
 
         Args:
@@ -39,10 +46,19 @@ class MainApp:
             enable_openclaw: Whether to enable OpenClaw connection (default: False)
         """
         if cls._instance is None:
-            cls._instance = MainApp(enable_xiaozhi=enable_xiaozhi, enable_openclaw=enable_openclaw)
+            cls._instance = MainApp(
+                enable_xiaozhi=enable_xiaozhi,
+                enable_openclaw=enable_openclaw,
+                enable_openai=enable_openai,
+            )
         return cls._instance
 
-    def __init__(self, enable_xiaozhi: bool = True, enable_openclaw: bool = False):
+    def __init__(
+        self,
+        enable_xiaozhi: bool = True,
+        enable_openclaw: bool = False,
+        enable_openai: bool = False,
+    ):
         """Initialize the main application.
 
         Args:
@@ -59,6 +75,7 @@ class MainApp:
         # Feature flags
         self._enable_xiaozhi = enable_xiaozhi
         self._enable_openclaw = enable_openclaw
+        self._enable_openai = enable_openai
 
         # Device state
         self.device_state = DeviceState.IDLE
@@ -117,12 +134,25 @@ class MainApp:
                 "Either enable audio input or disable XiaoZhi."
             )
         
-        if not audio_input_enabled and self._enable_openclaw:
-            openclaw_input_mode = self.config.get_app_config("openclaw.input_mode", "local_asr")
-            if openclaw_input_mode == "local_asr":
+        if not audio_input_enabled:
+            local_asr_backends = []
+            if (
+                self._enable_openclaw
+                and self.config.get_app_config("openclaw.input_mode", "local_asr")
+                == "local_asr"
+            ):
+                local_asr_backends.append("OpenClaw")
+            if (
+                self._enable_openai
+                and self.config.get_app_config("openai.input_mode", "local_asr")
+                == "local_asr"
+            ):
+                local_asr_backends.append("OpenAI")
+            if local_asr_backends:
                 raise RuntimeError(
-                    "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but OpenClaw uses 'local_asr' mode. "
-                    "Either enable audio input, or set openclaw.input_mode='xiaoai_asr' in config."
+                    "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but "
+                    f"{', '.join(local_asr_backends)} uses 'local_asr' mode. "
+                    "Either enable audio input, or set input_mode='xiaoai_asr' in config."
                 )
 
         # Create event loop thread
@@ -150,6 +180,9 @@ class MainApp:
         if self._enable_openclaw:
             OpenClawManager.initialize_from_config()
             asyncio.run_coroutine_threadsafe(OpenClawManager.connect(), self.loop)
+        if self._enable_openai:
+            OpenAIManager.initialize_from_config()
+            asyncio.run_coroutine_threadsafe(OpenAIManager.connect(), self.loop)
 
         # Start API Server if enabled
         if self._enable_api_server:
@@ -164,7 +197,7 @@ class MainApp:
         main_loop_thread.start()
 
         # Start audio services
-        if self._enable_xiaozhi or self._enable_openclaw:
+        if self._enable_xiaozhi or self._enable_openclaw or self._enable_openai:
             # Check audio input via env var (same as Rust), default True
             # Supports: "true"/"false", "1"/"0", "yes"/"no", "on"/"off"
             audio_input_enabled = os.environ.get(
@@ -179,21 +212,28 @@ class MainApp:
             else:
                 logger.info("[MainApp] Audio input disabled (VAD/KWS not started)")
 
-            # Pre-warm local ASR only when OpenClaw is configured to use it
-            # and audio input is enabled.
-            if audio_input_enabled and self._enable_openclaw:
-                input_mode = self.config.get_app_config(
-                    "openclaw.input_mode",
-                    "local_asr",
+            # Pre-warm local ASR only when an enabled backend is configured to use it.
+            if audio_input_enabled and (
+                (
+                    self._enable_openclaw
+                    and self.config.get_app_config("openclaw.input_mode", "local_asr")
+                    == "local_asr"
                 )
-                if input_mode == "local_asr":
-                    from core.services.audio.asr import ASRService
+                or (
+                    self._enable_openai
+                    and self.config.get_app_config(
+                        "openai.input_mode", "local_asr"
+                    )
+                    == "local_asr"
+                )
+            ):
+                from core.services.audio.asr import ASRService
 
-                    threading.Thread(
-                        target=ASRService.ensure_loaded,
-                        daemon=True,
-                        name="asr-warmup",
-                    ).start()
+                threading.Thread(
+                    target=ASRService.ensure_loaded,
+                    daemon=True,
+                    name="asr-warmup",
+                ).start()
 
     def _run_event_loop(self):
         """Run asyncio event loop in separate thread."""
@@ -313,6 +353,10 @@ class MainApp:
             asyncio.run_coroutine_threadsafe(
                 OpenClawManager.close(), self.loop
             )
+        if OpenAIManager.is_enabled():
+            asyncio.run_coroutine_threadsafe(
+                OpenAIManager.close(), self.loop
+            )
 
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
@@ -372,3 +416,36 @@ class MainApp:
             session_key: New session key (e.g. "agent:user123:my-app").
         """
         OpenClawManager.set_session_key(session_key)
+
+    async def send_to_openai(self, text: str, wait_response: bool = False) -> str | None:
+        """Send message to the OpenAI-compatible service."""
+        try:
+            full_text = text
+            if OpenAIManager._rule_prompt_for_skill:
+                full_text = text + "\n" + OpenAIManager._rule_prompt_for_skill
+            return await OpenAIManager.send(full_text, wait_response=wait_response)
+        except Exception as e:
+            logger.error(f"[MainApp] 发送消息到 OpenAI 兼容服务失败: {type(e).__name__}: {e}")
+            return None
+
+    async def send_to_openai_and_play_reply(
+        self,
+        text: str,
+        wait_response: bool = False,
+    ) -> str | None:
+        """Send message to the OpenAI-compatible service and play the reply."""
+        try:
+            full_text = text
+            if OpenAIManager._rule_prompt:
+                full_text = text + "\n" + OpenAIManager._rule_prompt
+            return await OpenAIManager.send_and_play_reply(
+                full_text,
+                wait_response=wait_response,
+            )
+        except Exception as e:
+            logger.error(f"[MainApp] 发送消息到 OpenAI 兼容服务失败: {type(e).__name__}: {e}")
+            return None
+
+    def set_openai_session_key(self, session_key: str):
+        """Override the OpenAI-compatible service session key at runtime."""
+        OpenAIManager.set_session_key(session_key)

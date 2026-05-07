@@ -6,13 +6,13 @@
 
 [![New](https://img.shields.io/badge/🎉_新功能-OpenClaw_支持_自定义唤醒词_|_连续对话_|_多_Agent_路由_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
 
-**小爱音箱与外部 AI 服务（小智 AI、OpenClaw）的桥接器**
+**小爱音箱与外部 AI 服务（小智 AI、OpenClaw、OpenAI 兼容服务）的桥接器**
 
 打破小爱音箱的封闭生态，灵活接入多种 AI 服务，提供 HTTP API 实现远程控制。
 
 [📺 演示 ①](https://www.bilibili.com/video/BV1DHcBz1Ex7) · [📺 演示 ②](https://www.bilibili.com/video/BV1UQQSBHEvg)
 
-[📖 快速开始](#-快速开始) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
+[📖 快速开始](#-快速开始) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
 
 > 本项目受 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 启发，并参考其 `examples/xiaozhi/` 示例演进而来，现已作为独立项目持续维护。
 
@@ -24,6 +24,7 @@
 
 | 功能                 | 说明                                                                             |
 | ------------------ | ------------------------------------------------------------------------------ |
+| 🔌 **OpenAI 兼容服务** | 接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等 `/v1/chat/completions` 服务 |
 | 🦞 **OpenClaw 集成** | 接入 [OpenClaw](https://github.com/openclaw/openclaw)，支持连续对话，可选豆包 TTS 或小爱原生 TTS  |
 | 🤖 **小智 AI 集成**    | 接入 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) 实时音频流 |
 | 🎙️ **自定义唤醒词**     | 支持中英文，不同唤醒词可路由到不同 AI 服务或不同 OpenClaw Agent                                      |
@@ -48,9 +49,9 @@
 
 ### 📥 模型文件
 
-如果你启用小智 AI，或 OpenClaw 连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
+如果你启用小智 AI，或 OpenClaw / OpenAI 兼容服务连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
 
-如果 OpenClaw 连续对话使用 `xiaoai_asr`，只需要 `VAD + KWS`，不需要本地 ASR 模型。
+如果 OpenClaw / OpenAI 兼容服务连续对话使用 `xiaoai_asr`，只需要 `VAD + KWS`，不需要本地 ASR 模型。
 
 1. 从 [releases](https://github.com/coderzc/open-xiaoai-bridge/releases/tag/vad-kws-asr-models) 下载模型压缩包
 2. 解压模型文件（路径见下方具体部署方式）
@@ -94,7 +95,7 @@ cd open-xiaoai-bridge
 # Linux 还需要: pkg-config, patchelf
 
 # 启动（按需设置环境变量）
-API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
+API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 ./scripts/start.sh
 
 # 启用 Client 鉴权（需与音箱端 token 一致）
 OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
@@ -106,6 +107,7 @@ OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
 | -------------------- | ------------- | ------------- |
 | `XIAOZHI_ENABLE`     | 启用小智 AI     | 禁用            |
 | `OPENCLAW_ENABLE`    | 启用 OpenClaw | 禁用            |
+| `OPENAI_ENABLE` | 启用 OpenAI 兼容服务 | 禁用        |
 | `API_SERVER_ENABLE`  | 启用 HTTP API | 禁用            |
 | `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
 | `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
@@ -340,6 +342,53 @@ curl -X POST http://localhost:9092/api/interrupt
 
 ***
 
+## 🔌 OpenAI 兼容服务
+
+用于接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等兼容 OpenAI Chat Completions 的服务。它是独立后端，不依赖 OpenClaw 协议。
+
+设置 `OPENAI_ENABLE=1` 启用。
+
+`config.py` 示例：
+
+```python
+"openai": {
+    "base_url": "http://127.0.0.1:8000/v1",
+    "api_key": "",
+    "model": "gpt-4o-mini",
+    "input_mode": "local_asr",  # 或 "xiaoai_asr"
+    "session_key": "default",
+    "system_prompt": "",
+    "temperature": 0.7,
+    "max_tokens": 512,
+    "history_max_messages": 20,
+    "tts_speaker": "xiaoai",
+}
+```
+
+触发连续对话时，在 `before_wakeup` 中返回 `"openai"`：
+
+```python
+async def before_wakeup(speaker, text, source, app):
+    if source == "kws" and "小黑" in text:
+        await speaker.play(text="小黑来了")
+        return "openai"
+
+    if source == "xiaoai" and text == "召唤小黑":
+        await speaker.abort_xiaoai()
+        return "openai"
+```
+
+单次发送并播报：
+
+```python
+if "让小黑" in text:
+    await speaker.abort_xiaoai()
+    await app.send_to_openai_and_play_reply(text.replace("让小黑", ""))
+    return None
+```
+
+`base_url` 可以直接填到 `/v1`，框架会自动调用 `/chat/completions`；如果你的服务已经给出完整 `/v1/chat/completions` 地址，也可以直接填写完整地址。连续对话会按 `session_key` 保存最近 `history_max_messages` 条上下文；需要隔离多个助手时，可在唤醒前调用 `app.set_openai_session_key("assistant-name")`。
+
 ## 🦞 OpenClaw 集成
 
 通过 [OpenClaw](https://github.com/openclaw/openclaw) 将小爱音箱变成你的 AI Agent 终端。
@@ -438,7 +487,7 @@ async def before_wakeup(speaker, text, source, app):
     # 返回 None → 交给小爱原生处理
 ```
 
-**返回值含义：** `"openclaw"` → 连续对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` 等方法）
+**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"openai"` → OpenAI 兼容服务连续对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` / `app.send_to_openai()` 等方法）
 
 ### 🧠 多 Agent 路由 — 一个唤醒词，一个专属 Agent
 

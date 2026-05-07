@@ -12,12 +12,14 @@ from core.utils.logger import logger
 
 
 class WakeupSessionManager:
-    """Dispatches wakeup events to XiaoZhi or OpenClaw controllers."""
+    """Dispatches wakeup events to XiaoZhi or external backend controllers."""
 
     def __init__(self):
         self.config = ConfigManager.instance()
         self._openclaw_controller = None
         self._openclaw_task: asyncio.Task | None = None
+        self._openai_controller = None
+        self._openai_task: asyncio.Task | None = None
         self._xiaozhi_future: asyncio.Future | None = None
 
     def _get_loop(self):
@@ -59,11 +61,15 @@ class WakeupSessionManager:
         if xiaozhi:
             xiaozhi.stop_wakeup_session()
 
-        # Stop OpenClaw conversation (cancels VAD + stops TTS stream + kills aplay)
+        # Stop external backend conversations (cancels VAD + stops TTS stream + kills aplay)
         if self._openclaw_controller and self._openclaw_controller.is_active():
             self._openclaw_controller.stop()
         if self._openclaw_task and not self._openclaw_task.done():
             loop.call_soon_threadsafe(self._openclaw_task.cancel)
+        if self._openai_controller and self._openai_controller.is_active():
+            self._openai_controller.stop()
+        if self._openai_task and not self._openai_task.done():
+            loop.call_soon_threadsafe(self._openai_task.cancel)
 
         asyncio.run_coroutine_threadsafe(self._stop_device_playback(), loop)
 
@@ -101,15 +107,16 @@ class WakeupSessionManager:
         is_final,
         is_vad_begin,
     ) -> bool:
-        """Route XiaoAI native ASR results to the active OpenClaw controller."""
-        if not self._openclaw_controller or not self._openclaw_controller.is_active():
-            return False
-        return self._openclaw_controller.consume_xiaoai_recognize_result(
-            dialog_id=dialog_id,
-            text=text,
-            is_final=is_final,
-            is_vad_begin=is_vad_begin,
-        )
+        """Route XiaoAI native ASR results to the active external backend controller."""
+        for controller in (self._openclaw_controller, self._openai_controller):
+            if controller and controller.is_active():
+                return controller.consume_xiaoai_recognize_result(
+                    dialog_id=dialog_id,
+                    text=text,
+                    is_final=is_final,
+                    is_vad_begin=is_vad_begin,
+                )
+        return False
 
     async def wakeup(self, text, source):
         before_wakeup = self.config.get_app_config("wakeup.before_wakeup")
@@ -123,6 +130,11 @@ class WakeupSessionManager:
             "session_key", "agent:main:open-xiaoai-bridge"
         )
         OpenClawManager._session_key = default_session_key
+        from core.openai import OpenAIManager
+        default_openai_session_key = self.config.get_app_config(
+            "openai", {}
+        ).get("session_key", "default")
+        OpenAIManager._session_key = default_openai_session_key
 
         if kws:
             kws.pause()
@@ -140,6 +152,8 @@ class WakeupSessionManager:
 
         if should_wakeup == "openclaw":
             await self._start_openclaw_conversation()
+        elif should_wakeup == "openai":
+            await self._start_openai_conversation()
         elif should_wakeup == "xiaozhi":
             self.on_wakeup()
 
@@ -171,11 +185,35 @@ class WakeupSessionManager:
             if kws:
                 kws.resume()
 
+    async def _start_openai_conversation(self):
+        """Start an OpenAI-compatible continuous conversation session."""
+        from core.openai_conversation import OpenAIConversationController
+
+        kws = get_kws()
+        if kws:
+            kws.pause()
+        try:
+            self._openai_controller = OpenAIConversationController()
+            self._openai_task = asyncio.create_task(self._openai_controller.start())
+            await self._openai_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error(
+                f"[Wakeup] OpenAI conversation failed: {type(exc).__name__}: {exc}",
+                module="Wakeup",
+            )
+        finally:
+            self._openai_controller = None
+            self._openai_task = None
+            if kws:
+                kws.resume()
+
     async def reset_all_sessions(self):
         """Reset all active sessions before starting a new one.
 
         Stops XiaoAI continuous conversation, interrupts any active XiaoZhi
-        session, and stops any OpenClaw continuous conversation.
+        session, and stops any external backend continuous conversation.
         """
         from core.xiaoai import XiaoAI
         from core.ref import get_xiaozhi
@@ -194,6 +232,8 @@ class WakeupSessionManager:
         # Stop OpenClaw continuous conversation (also stops its TTS stream)
         if self._openclaw_controller and self._openclaw_controller.is_active():
             self._openclaw_controller.stop()
+        if self._openai_controller and self._openai_controller.is_active():
+            self._openai_controller.stop()
 
         # Stop all audio playback on the device
         await self._stop_device_playback()

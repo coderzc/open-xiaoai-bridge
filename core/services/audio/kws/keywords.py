@@ -29,9 +29,14 @@ def should_generate_keywords():
     # 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
     openclaw_env = os.environ.get("OPENCLAW_ENABLE") or os.environ.get("OPENCLAW_ENABLED") or ""
     openclaw_enabled = openclaw_env.lower() in ("1", "true", "yes")
+    openai_enabled = os.environ.get("OPENAI_ENABLE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
-    if not xiaozhi_enabled and not openclaw_enabled:
-        return False, "XIAOZHI_ENABLE and OPENCLAW_ENABLE/OPENCLAW_ENABLED are both disabled"
+    if not xiaozhi_enabled and not openclaw_enabled and not openai_enabled:
+        return False, "XIAOZHI_ENABLE, OPENCLAW_ENABLE/OPENCLAW_ENABLED and OPENAI_ENABLE are all disabled"
 
     return True, ""
 
