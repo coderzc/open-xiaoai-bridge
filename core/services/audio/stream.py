@@ -47,7 +47,8 @@ class MyStream:
         self._is_output = output
         self._is_active = False
 
-        self.input_bytes: list[int] = []
+        self.input_bytes = bytearray()
+        self._read_offset = 0
 
         if start:
             self.start_stream()
@@ -89,19 +90,26 @@ class MyStream:
         if num_frames is None:
             data = bytes(self.input_bytes)
             self.input_bytes.clear()
+            self._read_offset = 0
             return data
 
-        num_frames = num_frames * 2
+        bytes_needed = num_frames * 2
         if (
             not self._is_input
             or not self._is_active
             # 达不到预期长度时，返回空字节，等待下一次读取
-            or len(self.input_bytes) < num_frames
+            or len(self.input_bytes) - self._read_offset < bytes_needed
         ):
             return bytes([])
 
-        data = bytes(self.input_bytes[:num_frames])
-        self.input_bytes = self.input_bytes[num_frames:]
+        # 偏移读：只取需要的部分，不删除剩余数据
+        data = bytes(self.input_bytes[self._read_offset:self._read_offset + bytes_needed])
+        self._read_offset += bytes_needed
+
+        # 延迟回收：累积偏移超过阈值才批量清理已读数据
+        if self._read_offset > 262144:
+            del self.input_bytes[:self._read_offset]
+            self._read_offset = 0
 
         return data
 
