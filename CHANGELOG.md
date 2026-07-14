@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## v1.0.7 - 2026-07-14
+
+### 重点更新
+
+- 新增 OpenAI 兼容 Chat 后端，可对接任意 OpenAI 协议兼容的 LLM 服务作为对话后端。(#15)
+- 新增 Doubao（豆包）ASR provider，支持使用豆包语音识别能力。(#13 by @gao19970120)
+- 新增 FireRedASR INT8 后端支持，提供更多离线 ASR 模型选择。
+- 支持 OpenClaw 协议 v4 握手，兼容新版 OpenClaw 客户端。(#20)
+
+### 修复与优化
+
+- 修复 OpenAI 模式下自定义唤醒词路由问题。(#17)
+- 优化 MyStream 音频读取性能：改用基于 offset 的读取与惰性清理，避免每个音频帧触发 O(n) 的 memmove，降低 CPU 占用。(#22 by @法塔·艾莉娅)
+
+### Full Changelog
+
+- https://github.com/coderzc/open-xiaoai-bridge/compare/v1.0.6...v1.0.7
+
 ## v1.0.6 - 2026-04-05
 
 ### 重点更新
