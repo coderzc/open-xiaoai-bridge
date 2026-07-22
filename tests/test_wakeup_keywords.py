@@ -42,8 +42,11 @@ class WakeupKeywordStartupTest(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf8")
 
         self.assertIn("OPENAI_ENABLE_VALUE", start_sh)
+        self.assertIn("QWENPAW_ENABLE_VALUE", start_sh)
         self.assertIn('[[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
+        self.assertIn('[[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
         self.assertIn('${OPENAI_ENABLE:-}', dockerfile)
+        self.assertIn('${QWENPAW_ENABLE:-}', dockerfile)
         self.assertIn('python core/services/audio/kws/keywords.py', dockerfile)
 
 

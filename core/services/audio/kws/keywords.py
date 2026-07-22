@@ -34,9 +34,19 @@ def should_generate_keywords():
         "true",
         "yes",
     )
+    qwenpaw_enabled = os.environ.get("QWENPAW_ENABLE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
-    if not xiaozhi_enabled and not openclaw_enabled and not openai_enabled:
-        return False, "XIAOZHI_ENABLE, OPENCLAW_ENABLE/OPENCLAW_ENABLED and OPENAI_ENABLE are all disabled"
+    if (
+        not xiaozhi_enabled
+        and not openclaw_enabled
+        and not openai_enabled
+        and not qwenpaw_enabled
+    ):
+        return False, "XIAOZHI_ENABLE, OPENCLAW_ENABLE/OPENCLAW_ENABLED, OPENAI_ENABLE and QWENPAW_ENABLE are all disabled"
 
     return True, ""
 

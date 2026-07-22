@@ -95,7 +95,7 @@ cd open-xiaoai-bridge
 # Linux 还需要: pkg-config, patchelf
 
 # 启动（按需设置环境变量）
-API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 ./scripts/start.sh
+API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 QWENPAW_ENABLE=1 ./scripts/start.sh
 
 # 启用 Client 鉴权（需与音箱端 token 一致）
 OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
@@ -108,6 +108,7 @@ OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
 | `XIAOZHI_ENABLE`     | 启用小智 AI     | 禁用            |
 | `OPENCLAW_ENABLE`    | 启用 OpenClaw | 禁用            |
 | `OPENAI_ENABLE` | 启用 OpenAI 兼容服务 | 禁用        |
+| `QWENPAW_ENABLE` | 启用 QwenPaw | 禁用        |
 | `API_SERVER_ENABLE`  | 启用 HTTP API | 禁用            |
 | `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
 | `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
@@ -388,6 +389,61 @@ if "让小黑" in text:
 ```
 
 `base_url` 可以直接填到 `/v1`，框架会自动调用 `/chat/completions`；如果你的服务已经给出完整 `/v1/chat/completions` 地址，也可以直接填写完整地址。连续对话会按 `session_key` 保存最近 `history_max_messages` 条上下文；需要隔离多个助手时，可在唤醒前调用 `app.set_openai_session_key("assistant-name")`。
+
+## 🐾 QwenPaw 集成
+
+用于接入阿里的 [QwenPaw](https://github.com/agentscope-ai/QwenPaw)。桥接器会调用 QwenPaw 的 HTTP Console 后台任务接口，将小爱音箱识别到的文本发送给指定 Agent，并把回复通过小爱或豆包 TTS 播放出来。
+
+先启动 QwenPaw：
+
+```bash
+qwenpaw app
+```
+
+再启动桥接器：
+
+```bash
+QWENPAW_ENABLE=1 ./scripts/start.sh
+```
+
+`config.py` 示例：
+
+```python
+"qwenpaw": {
+    "base_url": "http://127.0.0.1:8088",
+    "agent_id": "default",
+    "user_id": "open-xiaoai-bridge",
+    "input_mode": "local_asr",  # 或 "xiaoai_asr"
+    "session_key": "open-xiaoai-bridge",
+    "send_path": "/api/console/chat/task",
+    "task_status_path": "/api/console/chat/task/{task_id}",
+    "tts_speaker": "xiaoai",
+}
+```
+
+触发连续对话时，在 `before_wakeup` 中返回 `"qwenpaw"`：
+
+```python
+async def before_wakeup(speaker, text, source, app):
+    if source == "kws" and "小爪" in text:
+        await speaker.play(text="小爪来了")
+        return "qwenpaw"
+
+    if source == "xiaoai" and text == "召唤小爪":
+        await speaker.abort_xiaoai()
+        return "qwenpaw"
+```
+
+单次发送并播报：
+
+```python
+if "让小爪" in text:
+    await speaker.abort_xiaoai()
+    await app.send_to_qwenpaw_and_play_reply(text.replace("让小爪", ""))
+    return None
+```
+
+`agent_id` 会通过 `X-Agent-Id` 请求头发送给 QwenPaw；`session_key` 对应 QwenPaw 请求里的 `session_id`，需要隔离多个对话时可在唤醒前调用 `app.set_qwenpaw_session_key("speaker-session")`。
 
 ## 🦞 OpenClaw 集成
 
