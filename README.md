@@ -75,7 +75,7 @@ docker compose up -d
 > image: ghcr.nju.edu.cn/coderzc/open-xiaoai-bridge:latest
 > ```
 
-> **💡 容器访问宿主机 OpenClaw**：如果需要让容器访问宿主机上的 OpenClaw，请查看 [Docker 常见问题](#-docker)。
+> **💡 容器访问宿主机服务**：如果需要让容器访问宿主机上的 OpenClaw / QwenPaw，请查看 [Docker 常见问题](#-docker)。
 
 `docker-compose.yml` 已包含模型目录挂载：
 
@@ -395,17 +395,32 @@ if "让小黑" in text:
 
 用于接入阿里的 [QwenPaw](https://github.com/agentscope-ai/QwenPaw)。桥接器会调用 QwenPaw 的 HTTP Console 后台任务接口，将小爱音箱识别到的文本发送给指定 Agent，并把回复通过小爱或豆包 TTS 播放出来。
 
-先启动 QwenPaw：
+推荐使用 Docker Compose 运行桥接器。先启动 QwenPaw（可在宿主机或同一 Docker 网络中运行），然后在 `docker-compose.yml` 中启用：
 
-```bash
-qwenpaw app
+```yaml
+services:
+  open-xiaoai-bridge:
+    environment:
+      - QWENPAW_ENABLE=1
 ```
 
-再启动桥接器：
+修改完成后启动桥接器：
 
 ```bash
-QWENPAW_ENABLE=1 ./scripts/start.sh
+docker compose up -d
 ```
+
+如果 QwenPaw 运行在宿主机，容器里的 `127.0.0.1` 指向容器自身，需将 `base_url` 改为宿主机可访问地址，例如宿主机局域网 IP：
+
+```python
+"qwenpaw": {
+    "base_url": "http://192.168.1.10:8088",
+    "agent_id": "default",
+    "session_key": "open-xiaoai-bridge",
+}
+```
+
+也可以按 [Docker 常见问题](#-docker) 使用 `network_mode: host`，此时可继续使用 `http://127.0.0.1:8088`。
 
 `config.py` 示例：
 
@@ -701,13 +716,13 @@ APP_CONFIG = {
 
 ### 🐳 Docker
 
-1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw？**
+1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw？**
 
     默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
 
     需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是宿主机。
 
-    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw，使用 **方式 1**:
+    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw，使用 **方式 1**:
 
     **方式 1：增加 `network_mode: host`**
 
@@ -721,7 +736,7 @@ APP_CONFIG = {
 
     **方式 2：通过网络 IP 连接（无需 host 模式）**
 
-    如果不使用 `network_mode: host`，可以让 OpenClaw 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
+    如果不使用 `network_mode: host`，可以让 OpenClaw / QwenPaw 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
 
     可以直接一起改成下面这样：
 

@@ -10,6 +10,7 @@ services:
       - API_SERVER_ENABLE=1 # 启用 HTTP API 服务（可选）
       - API_SERVER_HOST=0.0.0.0 # HTTP API 服务监听地址（默认监听 127.0.0.1）
       - OPENCLAW_ENABLE=1       # 启用 OpenClaw（兼容旧值 OPENCLAW_ENABLED）
+      # - QWENPAW_ENABLE=1       # 启用 QwenPaw（可选）
       # - XIAOZHI_ENABLE=1       # 启用小智 AI（可选）
     volumes:
       - ./config.py:/app/config.py
