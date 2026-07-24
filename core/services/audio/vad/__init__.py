@@ -84,7 +84,9 @@ class _VAD:
 
     def _handle_speech_frame(self, frames):
         """处理语音帧"""
-        self.speech_count += len(frames)
+        # speech_count/silence_count are measured in samples (int16 => 2 bytes
+        # per sample) so they can be compared against duration_ms * rate / 1000.
+        self.speech_count += len(frames) // 2
         self.silence_count = 0
 
         if self.target == "speech":
@@ -106,7 +108,9 @@ class _VAD:
 
     def _handle_silence_frame(self, frames):
         """处理静音帧"""
-        self.silence_count += len(frames)
+        # Count in samples, not bytes (int16 => 2 bytes/sample), to match the
+        # min_silence_duration * rate / 1000 threshold below.
+        self.silence_count += len(frames) // 2
         self.speech_count = 0
 
         if self.target == "speech":
