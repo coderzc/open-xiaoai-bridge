@@ -28,7 +28,7 @@ class QwenPawManagerTest(unittest.TestCase):
         self.manager._auth_scheme = "Bearer"
 
     def test_build_payload_uses_qwenpaw_agent_request_shape(self):
-        self.manager._session_key = "speaker-session"
+        self.manager._session_key = "agent:default:speaker-session"
         self.manager._user_id = "speaker-user"
 
         payload = self.manager._build_payload("你好")
@@ -40,6 +40,27 @@ class QwenPawManagerTest(unittest.TestCase):
             [{"role": "user", "content": [{"type": "text", "text": "你好"}]}],
             payload["input"],
         )
+
+    def test_parse_session_key_splits_agent_and_session(self):
+        agent_id, session_id = self.manager._parse_session_key(
+            "agent:assistant:my-session"
+        )
+        self.assertEqual("assistant", agent_id)
+        self.assertEqual("my-session", session_id)
+
+    def test_parse_session_key_preserves_colons_in_session_id(self):
+        agent_id, session_id = self.manager._parse_session_key(
+            "agent:assistant:room:42"
+        )
+        self.assertEqual("assistant", agent_id)
+        self.assertEqual("room:42", session_id)
+
+    def test_parse_session_key_falls_back_for_plain_key(self):
+        self.manager._agent_id = "configured-agent"
+        agent_id, session_id = self.manager._parse_session_key("plain-key")
+        self.assertEqual("configured-agent", agent_id)
+        self.assertEqual("plain-key", session_id)
+
 
     def test_extract_response_text_from_console_task_result(self):
         body = {
@@ -79,7 +100,7 @@ class QwenPawManagerTest(unittest.TestCase):
         self.assertEqual("只读助手回复", self.manager._extract_response_text(body))
 
     def test_headers_include_agent_id(self):
-        self.manager._agent_id = "assistant"
+        self.manager._session_key = "agent:assistant:main"
 
         self.assertEqual(
             {"Content-Type": "application/json", "X-Agent-Id": "assistant"},
@@ -87,7 +108,7 @@ class QwenPawManagerTest(unittest.TestCase):
         )
 
     def test_headers_include_bearer_auth_when_token_configured(self):
-        self.manager._agent_id = "assistant"
+        self.manager._session_key = "agent:assistant:main"
         self.manager._auth_token = "secret-token"
 
         self.assertEqual(
@@ -122,7 +143,7 @@ class QwenPawManagerTest(unittest.TestCase):
         )
 
     def test_headers_support_custom_auth_header_without_scheme(self):
-        self.manager._agent_id = "assistant"
+        self.manager._session_key = "agent:assistant:main"
         self.manager._auth_token = "secret-token"
         self.manager._auth_header = "X-API-Key"
         self.manager._auth_scheme = ""

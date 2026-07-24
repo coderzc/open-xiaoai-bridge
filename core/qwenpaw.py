@@ -148,6 +148,22 @@ class QwenPawManager:
         return cls._session_tts_speakers.get(target_session_key) or cls._tts_speaker
 
     @classmethod
+    def _parse_session_key(cls, session_key: str | None = None) -> tuple[str, str]:
+        """Split a session_key into (agent_id, session_id).
+
+        The session_key uses the unified agent:<agentId>:<sessionId> format.
+        The first two segments are the marker and agentId; everything after
+        the second colon is the session id (which may itself contain colons).
+        Falls back to the configured agent_id and the raw key when the value
+        does not follow the convention, for backward compatibility.
+        """
+        key = session_key or cls._session_key or ""
+        parts = key.split(":", 2)
+        if len(parts) == 3 and parts[0] == "agent" and parts[1]:
+            return parts[1], parts[2]
+        return cls._agent_id, key
+
+    @classmethod
     async def send(cls, text: str, wait_response: bool = False) -> str | None:
         run_id = await cls._send_and_track(text)
         if run_id is None:
@@ -248,6 +264,7 @@ class QwenPawManager:
 
     @classmethod
     def _build_payload(cls, text: str) -> dict[str, Any]:
+        _agent_id, session_id = cls._parse_session_key()
         return {
             "input": [
                 {
@@ -255,7 +272,7 @@ class QwenPawManager:
                     "content": [{"type": "text", "text": text}],
                 }
             ],
-            "session_id": cls._session_key,
+            "session_id": session_id,
             "user_id": cls._user_id,
             "stream": True,
             "timeout": cls._response_timeout,
@@ -264,8 +281,9 @@ class QwenPawManager:
     @classmethod
     def _headers(cls) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if cls._agent_id:
-            headers["X-Agent-Id"] = cls._agent_id
+        agent_id, _session_id = cls._parse_session_key()
+        if agent_id:
+            headers["X-Agent-Id"] = agent_id
         if cls._auth_token:
             if cls._auth_scheme:
                 headers[cls._auth_header] = f"{cls._auth_scheme} {cls._auth_token}"

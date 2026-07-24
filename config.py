@@ -327,13 +327,18 @@ APP_CONFIG = {
     # 需先启动 QwenPaw: qwenpaw app
     "qwenpaw": {
         "base_url": "http://127.0.0.1:8088",
+        # agent_id 仅作为回退：当 session_key 不含 agentId 时才使用。
+        # 正常情况下 agentId 直接从 session_key 的第二段解析，无需单独配置。
         "agent_id": "default",
         "user_id": "open-xiaoai-bridge",
         # 输入模式：
         #   - "local_asr": 使用本地 VAD + SherpaASR
         #   - "xiaoai_asr": 接管小爱原生 ASR 结果
         "input_mode": "local_asr",
-        # session_key 统一采用 agent:<agentId>:<rest> 格式，便于 after_wakeup 解析
+        # session_key 采用 agent:<agentId>:<sessionId> 格式：
+        #   - 第二段 agentId 作为 X-Agent-Id 请求头发给服务端
+        #   - 第三段起为 sessionId，作为请求体 session_id 发给服务端
+        # 例如 agent:default:open-xiaoai-bridge -> agent=default, session=open-xiaoai-bridge
         "session_key": "agent:default:open-xiaoai-bridge",
         # QwenPaw 当前推荐使用后台任务接口：
         # POST /api/console/chat/task -> GET /api/console/chat/task/{task_id}
