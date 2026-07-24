@@ -591,13 +591,26 @@ class ExternalConversationController:
                 logger.debug(f"Send sound error: {exc}", module=self.LOG_MODULE)
 
     async def _call_after_wakeup(self):
-        """Call the user-defined after_wakeup hook."""
+        """Call the user-defined after_wakeup hook.
+
+        The hook is user-supplied config; guard it so a bug in the callback
+        (e.g. an IndexError while parsing session_key) never tears down the
+        conversation exit flow.
+        """
         after_wakeup = self.config.get_app_config("wakeup.after_wakeup")
         if after_wakeup:
             speaker = get_speaker()
             if speaker:
-                await after_wakeup(
-                    speaker,
-                    source=self.WAKEUP_SOURCE,
-                    session_key=self.backend._session_key,
-                )
+                try:
+                    await after_wakeup(
+                        speaker,
+                        source=self.WAKEUP_SOURCE,
+                        session_key=self.backend._session_key,
+                    )
+                except Exception as exc:
+                    import traceback
+                    logger.error(
+                        f"after_wakeup hook error: {type(exc).__name__}: {exc}\n"
+                        f"{traceback.format_exc()}",
+                        module=self.LOG_MODULE,
+                    )

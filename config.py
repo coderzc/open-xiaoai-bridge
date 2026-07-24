@@ -149,7 +149,10 @@ async def after_wakeup(speaker, source=None, session_key=None):
 
         # 示例：按 agentId 区分退出提示语
         # session_key 格式：agent:<agentId>:<rest>，第二段即 agentId
-        # agent_id = session_key.split(":")[1] if session_key else None
+        # 注意：并非所有后端的 session_key 都含冒号（如 QwenPaw 默认为
+        # "open-xiaoai-bridge"），务必先判断再取，否则 split(":")[1] 会越界。
+        # parts = session_key.split(":") if session_key else []
+        # agent_id = parts[1] if len(parts) > 1 else None
         # if agent_id == "assistant":
         #     await speaker.play(text="助手，再见")
         # elif agent_id == "xiaomei":
