@@ -39,6 +39,9 @@ class QwenPawManager:
     _tts_speed = 1.0
     _rule_prompt = ""
     _rule_prompt_for_skill = ""
+    _auth_token = ""
+    _auth_header = "Authorization"
+    _auth_scheme = "Bearer"
     _response_events: dict[str, asyncio.Future] = {}
     _response_texts: dict[str, str] = {}
     _response_tts_speakers: dict[str, str | None] = {}
@@ -96,6 +99,9 @@ class QwenPawManager:
         cls._tts_speed = float(config.get("tts_speed", 1.0))
         cls._rule_prompt = str(config.get("rule_prompt", "") or "")
         cls._rule_prompt_for_skill = str(config.get("rule_prompt_for_skill", "") or "")
+        cls._auth_token = str(config.get("auth_token", "") or "")
+        cls._auth_header = str(config.get("auth_header", "Authorization")).strip() or "Authorization"
+        cls._auth_scheme = str(config.get("auth_scheme", "Bearer")).strip()
 
         if cls._enabled:
             logger.info(
@@ -260,6 +266,11 @@ class QwenPawManager:
         headers = {"Content-Type": "application/json"}
         if cls._agent_id:
             headers["X-Agent-Id"] = cls._agent_id
+        if cls._auth_token:
+            if cls._auth_scheme:
+                headers[cls._auth_header] = f"{cls._auth_scheme} {cls._auth_token}"
+            else:
+                headers[cls._auth_header] = cls._auth_token
         return headers
 
     @classmethod

@@ -20,6 +20,12 @@ class QwenPawManagerTest(unittest.TestCase):
         sys.modules.pop("core.qwenpaw", None)
         self.qwenpaw_module = importlib.import_module("core.qwenpaw")
         self.manager = self.qwenpaw_module.QwenPawManager
+        self._set_default_auth()
+
+    def _set_default_auth(self):
+        self.manager._auth_token = ""
+        self.manager._auth_header = "Authorization"
+        self.manager._auth_scheme = "Bearer"
 
     def test_build_payload_uses_qwenpaw_agent_request_shape(self):
         self.manager._session_key = "speaker-session"
@@ -77,6 +83,56 @@ class QwenPawManagerTest(unittest.TestCase):
 
         self.assertEqual(
             {"Content-Type": "application/json", "X-Agent-Id": "assistant"},
+            self.manager._headers(),
+        )
+
+    def test_headers_include_bearer_auth_when_token_configured(self):
+        self.manager._agent_id = "assistant"
+        self.manager._auth_token = "secret-token"
+
+        self.assertEqual(
+            {
+                "Content-Type": "application/json",
+                "X-Agent-Id": "assistant",
+                "Authorization": f"{self.manager._auth_scheme} {self.manager._auth_token}",
+            },
+            self.manager._headers(),
+        )
+
+    def test_config_uses_default_auth_header_when_options_omitted(self):
+        config = {
+            "base_url": "http://example.test",
+            "auth_token": "secret-token",
+        }
+        config_manager = types.SimpleNamespace(
+            get_app_config=lambda *_args: config,
+            add_reload_listener=lambda *_args: None,
+        )
+
+        with mock.patch.object(
+            self.qwenpaw_module.ConfigManager, "instance", return_value=config_manager
+        ):
+            self.manager.reload_from_config(enabled=True)
+
+        self.assertEqual("Authorization", self.manager._auth_header)
+        self.assertEqual("Bearer", self.manager._auth_scheme)
+        self.assertEqual(
+            f"{self.manager._auth_scheme} {self.manager._auth_token}",
+            self.manager._headers()["Authorization"],
+        )
+
+    def test_headers_support_custom_auth_header_without_scheme(self):
+        self.manager._agent_id = "assistant"
+        self.manager._auth_token = "secret-token"
+        self.manager._auth_header = "X-API-Key"
+        self.manager._auth_scheme = ""
+
+        self.assertEqual(
+            {
+                "Content-Type": "application/json",
+                "X-Agent-Id": "assistant",
+                "X-API-Key": "secret-token",
+            },
             self.manager._headers(),
         )
 

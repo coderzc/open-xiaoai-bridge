@@ -335,6 +335,8 @@ APP_CONFIG = {
         # POST /api/console/chat/task -> GET /api/console/chat/task/{task_id}
         "send_path": "/api/console/chat/task",
         "task_status_path": "/api/console/chat/task/{task_id}",
+        # 认证（可选）：非空时默认使用 Authorization 认证头
+        "auth_token": "",
         "response_timeout": 120,
         "poll_interval": 0.5,
         "tts_speed": 1.0,
