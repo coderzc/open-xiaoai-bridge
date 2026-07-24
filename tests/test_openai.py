@@ -21,12 +21,18 @@ class OpenAIHeadersTest(unittest.TestCase):
         self.manager = importlib.import_module("core.openai").OpenAIManager
         self.manager._api_key = ""
         self.manager._session_key = "agent:default:open-xiaoai-bridge"
-        self.manager._session_header = ""
 
-    def test_no_session_header_by_default(self):
-        """Standard OpenAI compatibility: session_key is not leaked as a header."""
-        headers = self.manager._headers()
-        self.assertEqual({"Content-Type": "application/json"}, headers)
+    def test_default_sends_hermes_session_header(self):
+        """Default config targets Hermes: session_key goes out as the header."""
+        self.assertEqual(
+            "agent:default:open-xiaoai-bridge",
+            self.manager._headers()["X-Hermes-Session-Key"],
+        )
+
+    def test_empty_session_header_disables_it(self):
+        """Setting session_header empty keeps requests header-free (plain OpenAI)."""
+        self.manager._session_header = ""
+        self.assertEqual({"Content-Type": "application/json"}, self.manager._headers())
 
     def test_session_header_sent_when_configured(self):
         self.manager._session_header = "X-Hermes-Session-Key"

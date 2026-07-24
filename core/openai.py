@@ -30,9 +30,9 @@ class OpenAIManager:
     _model = "gpt-4o-mini"
     _session_key = "agent:default:open-xiaoai-bridge"
     # Optional header used to send session_key to the server (e.g. Hermes'
-    # "X-Hermes-Session-Key" for long-term memory scoping). Empty = don't send,
-    # keeping standard OpenAI compatibility.
-    _session_header = ""
+    # "X-Hermes-Session-Key" for long-term memory scoping). Standard OpenAI /
+    # Ollama / LM Studio ignore the unknown header; set empty to disable.
+    _session_header = "X-Hermes-Session-Key"
     _system_prompt = ""
     _temperature: float | None = None
     _max_tokens: int | None = None
@@ -82,7 +82,7 @@ class OpenAIManager:
         cls._api_key = str(config.get("api_key", "") or "")
         cls._model = str(config.get("model", "gpt-4o-mini"))
         cls._session_key = str(config.get("session_key", "agent:default:open-xiaoai-bridge"))
-        cls._session_header = str(config.get("session_header", "") or "").strip()
+        cls._session_header = str(config.get("session_header", "X-Hermes-Session-Key") or "").strip()
         cls._system_prompt = str(config.get("system_prompt", "") or "")
         cls._timeout = int(config.get("response_timeout", 120))
         cls._history_max_messages = max(0, int(config.get("history_max_messages", 20)))

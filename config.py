@@ -311,10 +311,10 @@ APP_CONFIG = {
         # session_key 统一采用 agent:<agentId>:<rest> 格式，便于 after_wakeup 解析
         "session_key": "agent:default:open-xiaoai-bridge",
         # 可选：把 session_key 作为请求头发给服务端，用于服务端长期记忆作用域。
-        # 留空则不发送（标准 OpenAI/Ollama/LM Studio 等保持默认）。
-        # 接入 Hermes Agent API Server 时设为 "X-Hermes-Session-Key"，
-        # 它只用于长期记忆作用域，chat/completions 仍是无状态（历史仍由 messages 携带），不会重复。
-        "session_header": "",
+        # 默认设为 Hermes 的 "X-Hermes-Session-Key"；它只用于长期记忆作用域，
+        # chat/completions 仍是无状态（历史仍由 messages 携带），不会重复。
+        # 接标准 OpenAI/Ollama/LM Studio 时该头会被忽略（无害），如需彻底关闭可留空。
+        "session_header": "X-Hermes-Session-Key",
         "system_prompt": "",
         "temperature": 0.7,
         "max_tokens": 512,
