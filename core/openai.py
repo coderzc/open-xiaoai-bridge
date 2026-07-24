@@ -29,6 +29,10 @@ class OpenAIManager:
     _api_key = ""
     _model = "gpt-4o-mini"
     _session_key = "agent:default:open-xiaoai-bridge"
+    # Optional header used to send session_key to the server (e.g. Hermes'
+    # "X-Hermes-Session-Key" for long-term memory scoping). Empty = don't send,
+    # keeping standard OpenAI compatibility.
+    _session_header = ""
     _system_prompt = ""
     _temperature: float | None = None
     _max_tokens: int | None = None
@@ -78,6 +82,7 @@ class OpenAIManager:
         cls._api_key = str(config.get("api_key", "") or "")
         cls._model = str(config.get("model", "gpt-4o-mini"))
         cls._session_key = str(config.get("session_key", "agent:default:open-xiaoai-bridge"))
+        cls._session_header = str(config.get("session_header", "") or "").strip()
         cls._system_prompt = str(config.get("system_prompt", "") or "")
         cls._timeout = int(config.get("response_timeout", 120))
         cls._history_max_messages = max(0, int(config.get("history_max_messages", 20)))
@@ -256,9 +261,7 @@ class OpenAIManager:
         if cls._max_tokens is not None:
             payload["max_tokens"] = cls._max_tokens
 
-        headers = {"Content-Type": "application/json"}
-        if cls._api_key:
-            headers["Authorization"] = f"Bearer {cls._api_key}"
+        headers = cls._headers()
 
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=cls._timeout)
@@ -277,6 +280,19 @@ class OpenAIManager:
         if response_text:
             cls._append_history(history, text, response_text)
         return response_text
+
+    @classmethod
+    def _headers(cls) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if cls._api_key:
+            headers["Authorization"] = f"Bearer {cls._api_key}"
+        # Scope server-side long-term memory to this session (e.g. Hermes'
+        # X-Hermes-Session-Key). chat/completions stays stateless — the
+        # messages array is still the source of turn history — so this does
+        # not duplicate context.
+        if cls._session_header and cls._session_key:
+            headers[cls._session_header] = cls._session_key
+        return headers
 
     @classmethod
     def _chat_completions_url(cls) -> str:
