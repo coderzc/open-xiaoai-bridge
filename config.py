@@ -26,11 +26,12 @@ async def before_wakeup(speaker, text, source, app):
         source  : 唤醒来源
                     'kws'    — 本地关键词唤醒（用户说了唤醒词）
                     'xiaoai' — 小爱同学收到用户语音指令
-        app     : MainApp 实例，可调用 send_to_openclaw / send_to_openai 等方法
+        app     : MainApp 实例，可调用 send_to_openclaw / send_to_openai / send_to_qwenpaw 等方法
 
     返回值：
         "openclaw" — 进入 OpenClaw 连续对话流程
         "openai"   — 进入 OpenAI 兼容服务连续对话流程（例如 Hermes Agent API Server）
+        "qwenpaw"  — 进入 QwenPaw 连续对话流程
         "xiaozhi"  — 进入小智 AI 流程
         None       — 不做额外处理（可在此自行调用 app.send_to_openclaw 等）
 
@@ -74,6 +75,10 @@ async def before_wakeup(speaker, text, source, app):
             await speaker.play(text="小黑来了")
             return "openai"
 
+        if "小爪" in text:
+            await speaker.play(text="小爪来了")
+            return "qwenpaw"
+
         if "小智" in text:
             await speaker.play(text="小智来了")
             return "xiaozhi"
@@ -94,6 +99,10 @@ async def before_wakeup(speaker, text, source, app):
         if text == "召唤小黑":
             await speaker.abort_xiaoai()
             return "openai"  # OpenAI-compatible service continuous conversation
+
+        if text == "召唤小爪":
+            await speaker.abort_xiaoai()
+            return "qwenpaw"  # QwenPaw continuous conversation
 
         if text == "召唤小智":
             await speaker.abort_xiaoai()
@@ -116,6 +125,11 @@ async def before_wakeup(speaker, text, source, app):
             await app.send_to_openai_and_play_reply(text.replace("让小黑", ""))
             return None
 
+        if "让小爪" in text:
+            await speaker.abort_xiaoai()
+            await app.send_to_qwenpaw_and_play_reply(text.replace("让小爪", ""))
+            return None
+
 
 async def after_wakeup(speaker, source=None, session_key=None):
     """
@@ -125,7 +139,8 @@ async def after_wakeup(speaker, source=None, session_key=None):
         - 'xiaozhi': 小智对话超时退出
         - 'openclaw': OpenClaw 连续对话退出
         - 'openai': OpenAI 兼容服务连续对话退出
-    - session_key: 当前 OpenClaw/OpenAI 后端 session_key
+        - 'qwenpaw': QwenPaw 连续对话退出
+    - session_key: 当前 OpenClaw/OpenAI/QwenPaw 后端 session_key
         可据此区分是哪个 Agent 退出，例如播放不同的退出提示语
     """
     if source == "openclaw":
@@ -144,6 +159,8 @@ async def after_wakeup(speaker, source=None, session_key=None):
         await speaker.play(text="龙虾，再见")
     if source == "openai":
         await speaker.play(text="小黑，再见")
+    if source == "qwenpaw":
+        await speaker.play(text="小爪，再见")
     if source == "xiaozhi":
         await speaker.play(text="小智，再见")
 
@@ -158,6 +175,8 @@ APP_CONFIG = {
             "龙虾你好",
             "你好小黑",
             "小黑你好",
+            "你好小爪",
+            "小爪你好",
         ],
         # 静音多久后自动退出唤醒（秒）
         "timeout": 20,
@@ -300,5 +319,29 @@ APP_CONFIG = {
         "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
         "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字。字数控制在300字以内",
         "extra_body": {},
+    },
+    # QwenPaw Configuration
+    # 需先启动 QwenPaw: qwenpaw app
+    "qwenpaw": {
+        "base_url": "http://127.0.0.1:8088",
+        "agent_id": "default",
+        "user_id": "open-xiaoai-bridge",
+        # 输入模式：
+        #   - "local_asr": 使用本地 VAD + SherpaASR
+        #   - "xiaoai_asr": 接管小爱原生 ASR 结果
+        "input_mode": "local_asr",
+        "session_key": "open-xiaoai-bridge",
+        # QwenPaw 当前推荐使用后台任务接口：
+        # POST /api/console/chat/task -> GET /api/console/chat/task/{task_id}
+        "send_path": "/api/console/chat/task",
+        "task_status_path": "/api/console/chat/task/{task_id}",
+        "response_timeout": 120,
+        "poll_interval": 0.5,
+        "tts_speed": 1.0,
+        "tts_speaker": "xiaoai",
+        "session_tts_speakers": {},
+        "exit_keywords": ["退出", "停止", "再见"],
+        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
+        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送给 QwenPaw 的，他看不到你回复的文字。字数控制在300字以内",
     },
 }

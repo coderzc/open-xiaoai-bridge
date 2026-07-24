@@ -5,6 +5,7 @@ This module manages the main application flow, coordinating between:
 - XiaoZhi (AI conversation service)
 - OpenClaw (External integration)
 - OpenAI (OpenAI-compatible chat service)
+- QwenPaw (QwenPaw personal agent workstation)
 - Audio system (VAD, KWS, Codec)
 """
 
@@ -24,6 +25,7 @@ from core.services.protocols.typing import (
 )
 from core.openclaw import OpenClawManager
 from core.openai import OpenAIManager
+from core.qwenpaw import QwenPawManager
 from core.services.api_server import APIServer
 
 
@@ -38,18 +40,21 @@ class MainApp:
         enable_xiaozhi: bool = True,
         enable_openclaw: bool = False,
         enable_openai: bool = False,
+        enable_qwenpaw: bool = False,
     ):
         """Get singleton instance.
 
         Args:
             enable_xiaozhi: Whether to enable XiaoZhi AI connection (default: True)
             enable_openclaw: Whether to enable OpenClaw connection (default: False)
+            enable_qwenpaw: Whether to enable QwenPaw connection (default: False)
         """
         if cls._instance is None:
             cls._instance = MainApp(
                 enable_xiaozhi=enable_xiaozhi,
                 enable_openclaw=enable_openclaw,
                 enable_openai=enable_openai,
+                enable_qwenpaw=enable_qwenpaw,
             )
         return cls._instance
 
@@ -58,12 +63,14 @@ class MainApp:
         enable_xiaozhi: bool = True,
         enable_openclaw: bool = False,
         enable_openai: bool = False,
+        enable_qwenpaw: bool = False,
     ):
         """Initialize the main application.
 
         Args:
             enable_xiaozhi: Whether to enable XiaoZhi AI connection
             enable_openclaw: Whether to enable OpenClaw connection
+            enable_qwenpaw: Whether to enable QwenPaw connection
         """
         if MainApp._instance is not None:
             raise Exception("MainApp is singleton, use instance() to get instance")
@@ -76,6 +83,7 @@ class MainApp:
         self._enable_xiaozhi = enable_xiaozhi
         self._enable_openclaw = enable_openclaw
         self._enable_openai = enable_openai
+        self._enable_qwenpaw = enable_qwenpaw
 
         # Device state
         self.device_state = DeviceState.IDLE
@@ -148,6 +156,12 @@ class MainApp:
                 == "local_asr"
             ):
                 local_asr_backends.append("OpenAI")
+            if (
+                self._enable_qwenpaw
+                and self.config.get_app_config("qwenpaw.input_mode", "local_asr")
+                == "local_asr"
+            ):
+                local_asr_backends.append("QwenPaw")
             if local_asr_backends:
                 raise RuntimeError(
                     "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but "
@@ -183,6 +197,9 @@ class MainApp:
         if self._enable_openai:
             OpenAIManager.initialize_from_config()
             asyncio.run_coroutine_threadsafe(OpenAIManager.connect(), self.loop)
+        if self._enable_qwenpaw:
+            QwenPawManager.initialize_from_config()
+            asyncio.run_coroutine_threadsafe(QwenPawManager.connect(), self.loop)
 
         # Start API Server if enabled
         if self._enable_api_server:
@@ -197,7 +214,12 @@ class MainApp:
         main_loop_thread.start()
 
         # Start audio services
-        if self._enable_xiaozhi or self._enable_openclaw or self._enable_openai:
+        if (
+            self._enable_xiaozhi
+            or self._enable_openclaw
+            or self._enable_openai
+            or self._enable_qwenpaw
+        ):
             # Check audio input via env var (same as Rust), default True
             # Supports: "true"/"false", "1"/"0", "yes"/"no", "on"/"off"
             audio_input_enabled = os.environ.get(
@@ -223,6 +245,13 @@ class MainApp:
                     self._enable_openai
                     and self.config.get_app_config(
                         "openai.input_mode", "local_asr"
+                    )
+                    == "local_asr"
+                )
+                or (
+                    self._enable_qwenpaw
+                    and self.config.get_app_config(
+                        "qwenpaw.input_mode", "local_asr"
                     )
                     == "local_asr"
                 )
@@ -357,6 +386,10 @@ class MainApp:
             asyncio.run_coroutine_threadsafe(
                 OpenAIManager.close(), self.loop
             )
+        if QwenPawManager.is_enabled():
+            asyncio.run_coroutine_threadsafe(
+                QwenPawManager.close(), self.loop
+            )
 
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
@@ -449,3 +482,36 @@ class MainApp:
     def set_openai_session_key(self, session_key: str):
         """Override the OpenAI-compatible service session key at runtime."""
         OpenAIManager.set_session_key(session_key)
+
+    async def send_to_qwenpaw(self, text: str, wait_response: bool = False) -> str | None:
+        """Send message to QwenPaw."""
+        try:
+            full_text = text
+            if QwenPawManager._rule_prompt_for_skill:
+                full_text = text + "\n" + QwenPawManager._rule_prompt_for_skill
+            return await QwenPawManager.send(full_text, wait_response=wait_response)
+        except Exception as e:
+            logger.error(f"[MainApp] 发送消息到 QwenPaw 失败: {type(e).__name__}: {e}")
+            return None
+
+    async def send_to_qwenpaw_and_play_reply(
+        self,
+        text: str,
+        wait_response: bool = False,
+    ) -> str | None:
+        """Send message to QwenPaw and play the reply."""
+        try:
+            full_text = text
+            if QwenPawManager._rule_prompt:
+                full_text = text + "\n" + QwenPawManager._rule_prompt
+            return await QwenPawManager.send_and_play_reply(
+                full_text,
+                wait_response=wait_response,
+            )
+        except Exception as e:
+            logger.error(f"[MainApp] 发送消息到 QwenPaw 失败: {type(e).__name__}: {e}")
+            return None
+
+    def set_qwenpaw_session_key(self, session_key: str):
+        """Override the QwenPaw session key at runtime."""
+        QwenPawManager.set_session_key(session_key)

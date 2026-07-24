@@ -6,13 +6,13 @@
 
 [![New](https://img.shields.io/badge/🎉_新功能-OpenClaw_支持_自定义唤醒词_|_连续对话_|_多_Agent_路由_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
 
-**小爱音箱与外部 AI 服务（小智 AI、OpenClaw、OpenAI 兼容服务）的桥接器**
+**小爱音箱与外部 AI 服务（小智 AI、OpenClaw、OpenAI 兼容服务、QwenPaw）的桥接器**
 
 打破小爱音箱的封闭生态，灵活接入多种 AI 服务，提供 HTTP API 实现远程控制。
 
 [📺 演示 ①](https://www.bilibili.com/video/BV1DHcBz1Ex7) · [📺 演示 ②](https://www.bilibili.com/video/BV1UQQSBHEvg)
 
-[📖 快速开始](#-快速开始) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
+[📖 快速开始](#-快速开始) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🐾 QwenPaw 集成](#-qwenpaw-集成) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
 
 > 本项目受 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 启发，并参考其 `examples/xiaozhi/` 示例演进而来，现已作为独立项目持续维护。
 
@@ -25,6 +25,7 @@
 | 功能                 | 说明                                                                             |
 | ------------------ | ------------------------------------------------------------------------------ |
 | 🔌 **OpenAI 兼容服务** | 接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等 `/v1/chat/completions` 服务 |
+| 🐾 **QwenPaw 集成**   | 接入 [QwenPaw](https://github.com/agentscope-ai/QwenPaw) HTTP Console 任务接口，支持指定 Agent 和会话 |
 | 🦞 **OpenClaw 集成** | 接入 [OpenClaw](https://github.com/openclaw/openclaw)，支持连续对话，可选豆包 TTS 或小爱原生 TTS  |
 | 🤖 **小智 AI 集成**    | 接入 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) 实时音频流 |
 | 🎙️ **自定义唤醒词**     | 支持中英文，不同唤醒词可路由到不同 AI 服务或不同 OpenClaw Agent                                      |
@@ -49,9 +50,9 @@
 
 ### 📥 模型文件
 
-如果你启用小智 AI，或 OpenClaw / OpenAI 兼容服务连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
+如果你启用小智 AI，或 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
 
-如果 OpenClaw / OpenAI 兼容服务连续对话使用 `xiaoai_asr`，只需要 `VAD + KWS`，不需要本地 ASR 模型。
+如果 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `xiaoai_asr`，只需要 `VAD + KWS`，不需要本地 ASR 模型。
 
 1. 从 [releases](https://github.com/coderzc/open-xiaoai-bridge/releases/tag/vad-kws-asr-models) 下载模型压缩包
 2. 解压模型文件（路径见下方具体部署方式）
@@ -74,7 +75,7 @@ docker compose up -d
 > image: ghcr.nju.edu.cn/coderzc/open-xiaoai-bridge:latest
 > ```
 
-> **💡 容器访问宿主机 OpenClaw**：如果需要让容器访问宿主机上的 OpenClaw，请查看 [Docker 常见问题](#-docker)。
+> **💡 容器访问宿主机服务**：如果需要让容器访问宿主机上的 OpenClaw / QwenPaw，请查看 [Docker 常见问题](#-docker)。
 
 `docker-compose.yml` 已包含模型目录挂载：
 
@@ -95,7 +96,7 @@ cd open-xiaoai-bridge
 # Linux 还需要: pkg-config, patchelf
 
 # 启动（按需设置环境变量）
-API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 ./scripts/start.sh
+API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 QWENPAW_ENABLE=1 ./scripts/start.sh
 
 # 启用 Client 鉴权（需与音箱端 token 一致）
 OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
@@ -108,6 +109,7 @@ OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
 | `XIAOZHI_ENABLE`     | 启用小智 AI     | 禁用            |
 | `OPENCLAW_ENABLE`    | 启用 OpenClaw | 禁用            |
 | `OPENAI_ENABLE` | 启用 OpenAI 兼容服务 | 禁用        |
+| `QWENPAW_ENABLE` | 启用 QwenPaw | 禁用        |
 | `API_SERVER_ENABLE`  | 启用 HTTP API | 禁用            |
 | `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
 | `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
@@ -389,6 +391,76 @@ if "让小黑" in text:
 
 `base_url` 可以直接填到 `/v1`，框架会自动调用 `/chat/completions`；如果你的服务已经给出完整 `/v1/chat/completions` 地址，也可以直接填写完整地址。连续对话会按 `session_key` 保存最近 `history_max_messages` 条上下文；需要隔离多个助手时，可在唤醒前调用 `app.set_openai_session_key("assistant-name")`。
 
+## 🐾 QwenPaw 集成
+
+用于接入阿里的 [QwenPaw](https://github.com/agentscope-ai/QwenPaw)。桥接器会调用 QwenPaw 的 HTTP Console 后台任务接口，将小爱音箱识别到的文本发送给指定 Agent，并把回复通过小爱或豆包 TTS 播放出来。
+
+推荐使用 Docker Compose 运行桥接器。先启动 QwenPaw（可在宿主机或同一 Docker 网络中运行），然后在 `docker-compose.yml` 中启用：
+
+```yaml
+services:
+  open-xiaoai-bridge:
+    environment:
+      - QWENPAW_ENABLE=1
+```
+
+修改完成后启动桥接器：
+
+```bash
+docker compose up -d
+```
+
+如果 QwenPaw 运行在宿主机，容器里的 `127.0.0.1` 指向容器自身，需将 `base_url` 改为宿主机可访问地址，例如宿主机局域网 IP：
+
+```python
+"qwenpaw": {
+    "base_url": "http://192.168.1.10:8088",
+    "agent_id": "default",
+    "session_key": "open-xiaoai-bridge",
+}
+```
+
+也可以按 [Docker 常见问题](#-docker) 使用 `network_mode: host`，此时可继续使用 `http://127.0.0.1:8088`。
+
+`config.py` 示例：
+
+```python
+"qwenpaw": {
+    "base_url": "http://127.0.0.1:8088",
+    "agent_id": "default",
+    "user_id": "open-xiaoai-bridge",
+    "input_mode": "local_asr",  # 或 "xiaoai_asr"
+    "session_key": "open-xiaoai-bridge",
+    "send_path": "/api/console/chat/task",
+    "task_status_path": "/api/console/chat/task/{task_id}",
+    "tts_speaker": "xiaoai",
+}
+```
+
+触发连续对话时，在 `before_wakeup` 中返回 `"qwenpaw"`：
+
+```python
+async def before_wakeup(speaker, text, source, app):
+    if source == "kws" and "小爪" in text:
+        await speaker.play(text="小爪来了")
+        return "qwenpaw"
+
+    if source == "xiaoai" and text == "召唤小爪":
+        await speaker.abort_xiaoai()
+        return "qwenpaw"
+```
+
+单次发送并播报：
+
+```python
+if "让小爪" in text:
+    await speaker.abort_xiaoai()
+    await app.send_to_qwenpaw_and_play_reply(text.replace("让小爪", ""))
+    return None
+```
+
+`agent_id` 会通过 `X-Agent-Id` 请求头发送给 QwenPaw；`session_key` 对应 QwenPaw 请求里的 `session_id`，需要隔离多个对话时可在唤醒前调用 `app.set_qwenpaw_session_key("speaker-session")`。
+
 ## 🦞 OpenClaw 集成
 
 通过 [OpenClaw](https://github.com/openclaw/openclaw) 将小爱音箱变成你的 AI Agent 终端。
@@ -487,7 +559,7 @@ async def before_wakeup(speaker, text, source, app):
     # 返回 None → 交给小爱原生处理
 ```
 
-**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"openai"` → OpenAI 兼容服务连续对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` / `app.send_to_openai()` 等方法）
+**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"openai"` → OpenAI 兼容服务连续对话，`"qwenpaw"` → QwenPaw 连续对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` / `app.send_to_openai()` / `app.send_to_qwenpaw()` 等方法）
 
 ### 🧠 多 Agent 路由 — 一个唤醒词，一个专属 Agent
 
@@ -644,13 +716,13 @@ APP_CONFIG = {
 
 ### 🐳 Docker
 
-1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw？**
+1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw？**
 
     默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
 
     需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是宿主机。
 
-    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw，使用 **方式 1**:
+    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw，使用 **方式 1**:
 
     **方式 1：增加 `network_mode: host`**
 
@@ -664,7 +736,7 @@ APP_CONFIG = {
 
     **方式 2：通过网络 IP 连接（无需 host 模式）**
 
-    如果不使用 `network_mode: host`，可以让 OpenClaw 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
+    如果不使用 `network_mode: host`，可以让 OpenClaw / QwenPaw 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
 
     可以直接一起改成下面这样：
 
