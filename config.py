@@ -148,9 +148,8 @@ async def after_wakeup(speaker, source=None, session_key=None):
         # await speaker.play(server_file="/path/to/openclaw_bye.wav")
 
         # 示例：按 agentId 区分退出提示语
-        # session_key 格式：agent:<agentId>:<rest>，第二段即 agentId
-        # 注意：并非所有后端的 session_key 都含冒号（如 QwenPaw 默认为
-        # "open-xiaoai-bridge"），务必先判断再取，否则 split(":")[1] 会越界。
+        # 所有后端的 session_key 已统一为 agent:<agentId>:<rest> 格式，第二段即 agentId。
+        # 仍建议做越界防护，以兼容自定义的非标准 session_key。
         # parts = session_key.split(":") if session_key else []
         # agent_id = parts[1] if len(parts) > 1 else None
         # if agent_id == "assistant":
@@ -309,7 +308,8 @@ APP_CONFIG = {
         #   - "local_asr": 使用本地 VAD + SherpaASR
         #   - "xiaoai_asr": 接管小爱原生 ASR 结果
         "input_mode": "local_asr",
-        "session_key": "default",
+        # session_key 统一采用 agent:<agentId>:<rest> 格式，便于 after_wakeup 解析
+        "session_key": "agent:default:open-xiaoai-bridge",
         "system_prompt": "",
         "temperature": 0.7,
         "max_tokens": 512,
@@ -333,7 +333,8 @@ APP_CONFIG = {
         #   - "local_asr": 使用本地 VAD + SherpaASR
         #   - "xiaoai_asr": 接管小爱原生 ASR 结果
         "input_mode": "local_asr",
-        "session_key": "open-xiaoai-bridge",
+        # session_key 统一采用 agent:<agentId>:<rest> 格式，便于 after_wakeup 解析
+        "session_key": "agent:default:open-xiaoai-bridge",
         # QwenPaw 当前推荐使用后台任务接口：
         # POST /api/console/chat/task -> GET /api/console/chat/task/{task_id}
         "send_path": "/api/console/chat/task",

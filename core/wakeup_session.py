@@ -143,12 +143,12 @@ class WakeupSessionManager:
         from core.openai import OpenAIManager
         default_openai_session_key = self.config.get_app_config(
             "openai", {}
-        ).get("session_key", "default")
+        ).get("session_key", "agent:default:open-xiaoai-bridge")
         OpenAIManager._session_key = default_openai_session_key
         from core.qwenpaw import QwenPawManager
         default_qwenpaw_session_key = self.config.get_app_config(
             "qwenpaw", {}
-        ).get("session_key", "open-xiaoai-bridge")
+        ).get("session_key", "agent:default:open-xiaoai-bridge")
         QwenPawManager._session_key = default_qwenpaw_session_key
 
         if kws:

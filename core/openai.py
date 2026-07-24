@@ -28,7 +28,7 @@ class OpenAIManager:
     _base_url = "http://127.0.0.1:8000/v1"
     _api_key = ""
     _model = "gpt-4o-mini"
-    _session_key = "default"
+    _session_key = "agent:default:open-xiaoai-bridge"
     _system_prompt = ""
     _temperature: float | None = None
     _max_tokens: int | None = None
@@ -77,7 +77,7 @@ class OpenAIManager:
         cls._base_url = str(config.get("base_url", "http://127.0.0.1:8000/v1")).rstrip("/")
         cls._api_key = str(config.get("api_key", "") or "")
         cls._model = str(config.get("model", "gpt-4o-mini"))
-        cls._session_key = str(config.get("session_key", "default"))
+        cls._session_key = str(config.get("session_key", "agent:default:open-xiaoai-bridge"))
         cls._system_prompt = str(config.get("system_prompt", "") or "")
         cls._timeout = int(config.get("response_timeout", 120))
         cls._history_max_messages = max(0, int(config.get("history_max_messages", 20)))

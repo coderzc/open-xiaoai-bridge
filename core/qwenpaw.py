@@ -29,7 +29,7 @@ class QwenPawManager:
     _base_url = "http://127.0.0.1:8088"
     _agent_id = "default"
     _user_id = "open-xiaoai-bridge"
-    _session_key = "open-xiaoai-bridge"
+    _session_key = "agent:default:open-xiaoai-bridge"
     _send_path = "/api/console/chat/task"
     _task_status_path = "/api/console/chat/task/{task_id}"
     _response_timeout = 120
@@ -78,7 +78,7 @@ class QwenPawManager:
         cls._base_url = str(config.get("base_url", "http://127.0.0.1:8088")).rstrip("/")
         cls._agent_id = str(config.get("agent_id", "default") or "default")
         cls._user_id = str(config.get("user_id", "open-xiaoai-bridge") or "open-xiaoai-bridge")
-        cls._session_key = str(config.get("session_key", "open-xiaoai-bridge") or "open-xiaoai-bridge")
+        cls._session_key = str(config.get("session_key", "agent:default:open-xiaoai-bridge") or "agent:default:open-xiaoai-bridge")
         cls._send_path = str(config.get("send_path", "/api/console/chat/task") or "/api/console/chat/task")
         cls._task_status_path = str(
             config.get("task_status_path", "/api/console/chat/task/{task_id}")
