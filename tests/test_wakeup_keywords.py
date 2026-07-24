@@ -98,7 +98,7 @@ class XiaoAIWakeupKeywordTest(unittest.TestCase):
 
         class EventManagerStub:
             @staticmethod
-            def consume_openclaw_xiaoai_asr_result(**_kwargs):
+            def consume_xiaoai_asr_result(**_kwargs):
                 return False
 
             @staticmethod

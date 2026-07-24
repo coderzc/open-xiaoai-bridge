@@ -205,7 +205,7 @@ class XiaoAI:
                     is_final = payload.get("is_final")
                     is_vad_begin = payload.get("is_vad_begin")
 
-                    if EventManager.consume_openclaw_xiaoai_asr_result(
+                    if EventManager.consume_xiaoai_asr_result(
                         dialog_id=dialog_id,
                         text=text,
                         is_final=is_final,
@@ -214,7 +214,7 @@ class XiaoAI:
                         if dialog_id and text and is_final:
                             await cls._suppress_dialog(
                                 dialog_id,
-                                f"OpenClaw 接管原生 ASR",
+                                f"Bridge 接管原生 ASR",
                             )
                         return
                     

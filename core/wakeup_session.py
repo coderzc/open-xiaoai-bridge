@@ -106,7 +106,7 @@ class WakeupSessionManager:
         """Called by VAD when silence is detected."""
         pass
 
-    def consume_openclaw_xiaoai_asr_result(
+    def consume_xiaoai_asr_result(
         self,
         dialog_id: str,
         text: str,
