@@ -100,6 +100,29 @@ class QwenPawManagerTest(unittest.TestCase):
             self.manager._headers(),
         )
 
+    def test_config_uses_default_auth_header_when_options_omitted(self):
+        config = {
+            "base_url": "http://example.test",
+            "auth_token": "secret-token",
+        }
+        config_manager = types.SimpleNamespace(
+            get_app_config=lambda *_args: config,
+            add_reload_listener=lambda *_args: None,
+        )
+
+        with mock.patch.object(
+            self.qwenpaw_module.ConfigManager, "instance", return_value=config_manager
+        ):
+            self.manager.reload_from_config(enabled=True)
+
+        self.assertEqual("Authorization", self.manager._auth_header)
+        self.assertEqual("Bearer", self.manager._auth_scheme)
+        self.assertEqual({}, self.manager._extra_headers)
+        self.assertEqual(
+            f"{self.manager._auth_scheme} {self.manager._auth_token}",
+            self.manager._headers()["Authorization"],
+        )
+
     def test_headers_support_custom_auth_header_without_scheme(self):
         self.manager._agent_id = "assistant"
         self.manager._auth_token = "secret-token"
