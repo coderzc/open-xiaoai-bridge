@@ -20,6 +20,13 @@ class QwenPawManagerTest(unittest.TestCase):
         sys.modules.pop("core.qwenpaw", None)
         self.qwenpaw_module = importlib.import_module("core.qwenpaw")
         self.manager = self.qwenpaw_module.QwenPawManager
+        self._set_default_auth()
+
+    def _set_default_auth(self):
+        self.manager._auth_token = ""
+        self.manager._auth_header = "Authorization"
+        self.manager._auth_scheme = "Bearer"
+        self.manager._extra_headers = {}
 
     def test_build_payload_uses_qwenpaw_agent_request_shape(self):
         self.manager._session_key = "speaker-session"
@@ -74,10 +81,6 @@ class QwenPawManagerTest(unittest.TestCase):
 
     def test_headers_include_agent_id(self):
         self.manager._agent_id = "assistant"
-        self.manager._auth_token = ""
-        self.manager._auth_header = "Authorization"
-        self.manager._auth_scheme = "Bearer"
-        self.manager._extra_headers = {}
 
         self.assertEqual(
             {"Content-Type": "application/json", "X-Agent-Id": "assistant"},
@@ -87,9 +90,6 @@ class QwenPawManagerTest(unittest.TestCase):
     def test_headers_include_bearer_auth_when_token_configured(self):
         self.manager._agent_id = "assistant"
         self.manager._auth_token = "secret-token"
-        self.manager._auth_header = "Authorization"
-        self.manager._auth_scheme = "Bearer"
-        self.manager._extra_headers = {}
 
         self.assertEqual(
             {
@@ -105,7 +105,6 @@ class QwenPawManagerTest(unittest.TestCase):
         self.manager._auth_token = "secret-token"
         self.manager._auth_header = "X-API-Key"
         self.manager._auth_scheme = ""
-        self.manager._extra_headers = {}
 
         self.assertEqual(
             {
@@ -118,9 +117,6 @@ class QwenPawManagerTest(unittest.TestCase):
 
     def test_headers_merge_extra_headers(self):
         self.manager._agent_id = "assistant"
-        self.manager._auth_token = ""
-        self.manager._auth_header = "Authorization"
-        self.manager._auth_scheme = "Bearer"
         self.manager._extra_headers = {"X-Custom": "custom-value"}
 
         self.assertEqual(
