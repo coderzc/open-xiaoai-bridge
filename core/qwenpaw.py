@@ -42,7 +42,6 @@ class QwenPawManager:
     _auth_token = ""
     _auth_header = "Authorization"
     _auth_scheme = "Bearer"
-    _extra_headers: dict[str, str] = {}
     _response_events: dict[str, asyncio.Future] = {}
     _response_texts: dict[str, str] = {}
     _response_tts_speakers: dict[str, str | None] = {}
@@ -103,16 +102,6 @@ class QwenPawManager:
         cls._auth_token = str(config.get("auth_token", "") or "")
         cls._auth_header = str(config.get("auth_header", "Authorization")).strip() or "Authorization"
         cls._auth_scheme = str(config.get("auth_scheme", "Bearer")).strip()
-        extra_headers = config.get("extra_headers", {})
-        cls._extra_headers = (
-            {
-                str(key).strip(): str(value)
-                for key, value in extra_headers.items()
-                if str(key).strip() and value is not None
-            }
-            if isinstance(extra_headers, dict)
-            else {}
-        )
 
         if cls._enabled:
             logger.info(
@@ -282,7 +271,6 @@ class QwenPawManager:
                 headers[cls._auth_header] = f"{cls._auth_scheme} {cls._auth_token}"
             else:
                 headers[cls._auth_header] = cls._auth_token
-        headers.update(cls._extra_headers)
         return headers
 
     @classmethod

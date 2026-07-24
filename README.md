@@ -462,14 +462,13 @@ if "让小爪" in text:
 
 `agent_id` 会通过 `X-Agent-Id` 请求头发送给 QwenPaw；`session_key` 对应 QwenPaw 请求里的 `session_id`，需要隔离多个对话时可在唤醒前调用 `app.set_qwenpaw_session_key("speaker-session")`。
 
-`auth_token` 是可选项，非空时程序默认会附带 `Authorization` 认证头，不需要额外配置 `auth_header` / `auth_scheme`。如果你的部署要求自定义认证头或附加请求头，可按需增加：
+`auth_token` 是可选项，非空时程序默认会附带 `Authorization` 认证头，不需要额外配置 `auth_header` / `auth_scheme`。如果你的部署要求自定义认证头，可按需增加：
 
 ```python
 "qwenpaw": {
     "auth_header": "X-API-Key",
     "auth_scheme": "",
     "auth_token": "your-token",
-    "extra_headers": {"X-Workspace": "home"},
 }
 ```
 

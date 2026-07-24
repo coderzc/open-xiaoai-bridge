@@ -26,7 +26,6 @@ class QwenPawManagerTest(unittest.TestCase):
         self.manager._auth_token = ""
         self.manager._auth_header = "Authorization"
         self.manager._auth_scheme = "Bearer"
-        self.manager._extra_headers = {}
 
     def test_build_payload_uses_qwenpaw_agent_request_shape(self):
         self.manager._session_key = "speaker-session"
@@ -117,7 +116,6 @@ class QwenPawManagerTest(unittest.TestCase):
 
         self.assertEqual("Authorization", self.manager._auth_header)
         self.assertEqual("Bearer", self.manager._auth_scheme)
-        self.assertEqual({}, self.manager._extra_headers)
         self.assertEqual(
             f"{self.manager._auth_scheme} {self.manager._auth_token}",
             self.manager._headers()["Authorization"],
@@ -134,19 +132,6 @@ class QwenPawManagerTest(unittest.TestCase):
                 "Content-Type": "application/json",
                 "X-Agent-Id": "assistant",
                 "X-API-Key": "secret-token",
-            },
-            self.manager._headers(),
-        )
-
-    def test_headers_merge_extra_headers(self):
-        self.manager._agent_id = "assistant"
-        self.manager._extra_headers = {"X-Custom": "custom-value"}
-
-        self.assertEqual(
-            {
-                "Content-Type": "application/json",
-                "X-Agent-Id": "assistant",
-                "X-Custom": "custom-value",
             },
             self.manager._headers(),
         )
