@@ -59,6 +59,17 @@ class MyStream:
     def is_active(self) -> bool:
         return self._is_active
 
+    def clear_input(self) -> None:
+        """Drop all buffered input and reset the read cursor.
+
+        Both must happen together: clearing input_bytes without resetting
+        _read_offset leaves the cursor pointing past the (now shorter) buffer,
+        which makes read() skip freshly-arrived audio until the buffer refills
+        past the stale offset — corrupting every capture after the first.
+        """
+        self.input_bytes.clear()
+        self._read_offset = 0
+
     def start_stream(self) -> None:
         if not self._is_active:
             self._is_active = True
@@ -70,7 +81,7 @@ class MyStream:
             self._is_active = False
             if self._is_input:
                 GlobalStream.unregister_reader(self)
-                self.input_bytes.clear()
+                self.clear_input()
 
     def write(self, frames: bytes) -> None:
         # 发送输出音频流到扬声器

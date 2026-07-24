@@ -79,7 +79,7 @@ class _VAD:
         self.paused = False
         self.target = target
         self._reset_state()
-        self.stream.input_bytes.clear()  # discard stale audio data
+        self.stream.clear_input()  # discard stale audio + reset read cursor
         self.stream.start_stream()
 
     def _handle_speech_frame(self, frames):
