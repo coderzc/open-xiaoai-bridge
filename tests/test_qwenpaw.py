@@ -74,9 +74,61 @@ class QwenPawManagerTest(unittest.TestCase):
 
     def test_headers_include_agent_id(self):
         self.manager._agent_id = "assistant"
+        self.manager._auth_token = ""
+        self.manager._auth_header = "Authorization"
+        self.manager._auth_scheme = "Bearer"
+        self.manager._extra_headers = {}
 
         self.assertEqual(
             {"Content-Type": "application/json", "X-Agent-Id": "assistant"},
+            self.manager._headers(),
+        )
+
+    def test_headers_include_bearer_auth_when_token_configured(self):
+        self.manager._agent_id = "assistant"
+        self.manager._auth_token = "secret-token"
+        self.manager._auth_header = "Authorization"
+        self.manager._auth_scheme = "Bearer"
+        self.manager._extra_headers = {}
+
+        self.assertEqual(
+            {
+                "Content-Type": "application/json",
+                "X-Agent-Id": "assistant",
+                "Authorization": f"{self.manager._auth_scheme} {self.manager._auth_token}",
+            },
+            self.manager._headers(),
+        )
+
+    def test_headers_support_custom_auth_header_without_scheme(self):
+        self.manager._agent_id = "assistant"
+        self.manager._auth_token = "secret-token"
+        self.manager._auth_header = "X-API-Key"
+        self.manager._auth_scheme = ""
+        self.manager._extra_headers = {}
+
+        self.assertEqual(
+            {
+                "Content-Type": "application/json",
+                "X-Agent-Id": "assistant",
+                "X-API-Key": "secret-token",
+            },
+            self.manager._headers(),
+        )
+
+    def test_headers_merge_extra_headers(self):
+        self.manager._agent_id = "assistant"
+        self.manager._auth_token = ""
+        self.manager._auth_header = "Authorization"
+        self.manager._auth_scheme = "Bearer"
+        self.manager._extra_headers = {"X-Custom": "custom-value"}
+
+        self.assertEqual(
+            {
+                "Content-Type": "application/json",
+                "X-Agent-Id": "assistant",
+                "X-Custom": "custom-value",
+            },
             self.manager._headers(),
         )
 

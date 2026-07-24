@@ -433,6 +433,10 @@ docker compose up -d
     "session_key": "open-xiaoai-bridge",
     "send_path": "/api/console/chat/task",
     "task_status_path": "/api/console/chat/task/{task_id}",
+    "auth_token": "",
+    "auth_header": "Authorization",
+    "auth_scheme": "Bearer",
+    "extra_headers": {},
     "tts_speaker": "xiaoai",
 }
 ```
@@ -460,6 +464,19 @@ if "让小爪" in text:
 ```
 
 `agent_id` 会通过 `X-Agent-Id` 请求头发送给 QwenPaw；`session_key` 对应 QwenPaw 请求里的 `session_id`，需要隔离多个对话时可在唤醒前调用 `app.set_qwenpaw_session_key("speaker-session")`。
+
+当 `auth_token` 非空时，默认会附带 `Authorization` 认证头（值由 `auth_scheme` 和 `auth_token` 拼接）。如果你的部署要求自定义认证头，可改为：
+
+```python
+"qwenpaw": {
+    "auth_header": "X-API-Key",
+    "auth_scheme": "",
+    "auth_token": "your-token",
+    "extra_headers": {"X-Workspace": "home"},
+}
+```
+
+`auth_scheme` 设为空字符串时，请求头会直接发送 `auth_token` 原始值。
 
 ## 🦞 OpenClaw 集成
 
