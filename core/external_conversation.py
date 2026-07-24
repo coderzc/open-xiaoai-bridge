@@ -135,8 +135,10 @@ class ExternalConversationController:
         try:
             await self._conversation_loop()
         except Exception as exc:
+            import traceback
             logger.error(
-                f"Conversation loop error: {type(exc).__name__}: {exc}",
+                f"Conversation loop error: {type(exc).__name__}: {exc}\n"
+                f"{traceback.format_exc()}",
                 module=self.LOG_MODULE,
             )
         finally:
