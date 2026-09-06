@@ -85,7 +85,8 @@ async def before_wakeup(speaker, text, source, app):
 
         if "小▁p" in text:
             await speaker.play(text="我来了")
-            return "homeassistant"
+            speaker.wake_up()
+            return None
         if "美美" in text:
             await speaker.play(text="干嘛！我在写作业！")
             return "openai"
@@ -133,7 +134,7 @@ async def after_wakeup(speaker, source=None, session_key=None):
         await speaker.play(text="小爪，再见")
     if source == "xiaozhi":
         await speaker.play(text="小智，再见")
-    if source == "homeassistant":
+    if source == "openai":
         await speaker.play(text="我先退下了")
            
 
@@ -148,7 +149,6 @@ APP_CONFIG = {
             "龙虾你好",
             "你好小p",
             "小p你好",
-            "小p",
             "美美",
             "小黑你好",
             "你好小爪",
@@ -333,108 +333,5 @@ APP_CONFIG = {
         "exit_keywords": ["退出", "停止", "再见"],
         "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
         "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送给 QwenPaw 的，他看不到你回复的文字。字数控制在300字以内",
-    },
-       "homeassistant": {
-        # 是否启用
-        "enabled": False,
-
-        # Home Assistant 地址
-        "base_url": "http://192.168.100.80:8123",
-
-        # Home Assistant Long-Lived Access Token
-        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI0NGM5MTU2NjNlOWQ0YThiOTdjMWM2ZWZiZTJiMzY3OCIsImlhdCI6MTc4ODY2NTUzNCwiZXhwIjoyMTA0MDI1NTM0fQ.mMEI6pXEV-oVo78BdHHrGnGjvJHly5k6CnMLj8JjAq4",
-
-        # Conversation Agent
-        #
-        # 例如：
-        # conversation.home_assistant
-        # conversation.qwen
-        #
-        # 留空则使用 HA 默认 Agent
-        "agent_id": "conversation.ollama_conversation",
-
-        # 输入模式
-        #
-        # local_asr:
-        #     本地 VAD + ASR
-        #
-        # xiaoai_asr:
-        #     使用小爱原生 ASR
-        "input_mode": "xiaoai_asr",
-
-        # HTTP 请求超时时间
-        "response_timeout": 120,
-
-        # 等待小爱原生 ASR 的超时时间
-        "timeout": 30,
-
-        # 是否保持 Home Assistant conversation_id
-        "keep_conversation": True,
-
-        # 本地 session 标识
-        "session_key": "homeassistant:open-xiaoai-bridge",
-
-        # Home Assistant Conversation 参数
-        "language": "zh-CN",
-
-        # 连续对话退出关键词
-        "exit_keywords": [
-            "退出",
-            "停止",
-            "再见",
-            "滚",
-            "退下",
-            "结束对话",
-        ],
-
-        # TTS
-        #
-        # 当前实现：
-        # xiaoai = 使用小爱原生 TTS
-        "tts_speed": 1.0,
-        "tts_speaker": "xiaoai",
-
-        # 进入 Home Assistant 模式时的提示语
-        #
-        # 留空 = 不播放
-        "intro_prompt": "",
-
-        # 退出 Home Assistant 模式时的提示语
-        "exit_prompt": "好的，再见",
-
-        # 发给 Home Assistant Agent 前附加的规则
-        "rule_prompt": (
-            "注意：这是通过小爱音箱进行的语音对话。"
-            "请直接返回适合语音播报的纯文字内容，"
-            "不要使用 Markdown、代码块或特殊格式，"
-            "回答尽量简洁。"
-        ),
-
-        # 自定义状态
-        "state": {
-            # 是否维护 HA 状态实体
-            "enabled": False,
-
-            # 你的现有实体
-            "entity_id": "sensor.xiaomi_lx06_7e15_conversation",
-
-            # 是否更新用户最后一句话
-            "update_user_text": True,
-
-            # 是否更新 AI 最后回复
-            "update_response": True,
-
-            # 是否写入这些 attributes
-            "attributes": {
-                "mode": True,
-                "conversation_id": True,
-                "turn_count": True,
-                "last_user_text": True,
-                "last_response": True,
-                "source": True,
-                "wake_word": True,
-                "updated_at": True,
-            },
-        },
     },
 }
