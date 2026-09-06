@@ -164,7 +164,7 @@ flowchart TB
         subgraph ServicesLayer["服务层（可选）"]
             direction LR
             APIServer["API Server<br/>HTTP :9092"]
-            TTSModule["Doubao TTS"]
+            TTSModule["TTS<br/>Doubao / MLX-Audio"]
         end
     end
 
@@ -363,9 +363,43 @@ curl -X POST http://localhost:9092/api/interrupt
     "temperature": 0.7,
     "max_tokens": 512,
     "history_max_messages": 20,
+    "tts_provider": "mlx_audio",  # 或 "xiaoai"、"doubao"
     "tts_speaker": "xiaoai",
 }
 ```
+
+### 🧠 MLX-Audio TTS
+
+可在 Apple Silicon 上本地运行 [MLX-Audio](https://github.com/Blaizzy/mlx-audio)，通过它提供的 OpenAI-compatible `/v1/audio/speech` 接口合成语音。桥接器使用完整音频文件播放，推荐输出 `wav`。
+
+在 `config.py` 中增加配置：
+
+```python
+"tts": {
+    "mlx_audio": {
+        # Docker 中访问宿主机服务；本地运行时可改为 127.0.0.1
+        "base_url": "http://host.docker.internal:8000/v1",
+        "api_key": "",
+        "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-6bit",
+        "mode": "voice_design",  # 或 "custom_voice"
+        "voice": None,             # VoiceDesign 不需要预设音色
+        "lang_code": "Chinese",
+        "response_format": "wav",
+        "speed": 1.0,
+        "instruct": "年轻男性，自然聊天，标准普通话，无明显地域口音。",
+    },
+},
+```
+
+同时设置：
+
+```python
+"openai": {
+    "tts_provider": "mlx_audio",
+}
+```
+
+`voice_design` 使用 `instruct` 描述音色；`custom_voice` 使用 MLX-Audio 模型提供的 `voice`。当前适配器支持 `wav`、`mp3`、`flac`、`ogg` 和 `pcm`，不支持 `stream=true`。
 
 触发连续对话时，在 `before_wakeup` 中返回 `"openai"`：
 

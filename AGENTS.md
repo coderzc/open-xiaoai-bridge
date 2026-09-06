@@ -34,6 +34,7 @@ open-xiaoai-bridge/
 │   │   │   ├── kws/sherpa.py      # Sherpa KWS 关键词唤醒
 │   │   │   └── asr/sherpa.py      # Sherpa ASR 离线语音识别（SenseVoice）
 │   │   ├── tts/doubao.py          # 豆包 TTS 客户端（火山引擎）
+│   │   ├── tts/mlx_audio.py       # MLX-Audio TTS 客户端（OpenAI-compatible 接口）
 │   │   └── protocols/
 │   │       ├── websocket_protocol.py  # 小智 WebSocket 协议实现
 │   │       └── typing.py              # 协议类型定义
@@ -230,7 +231,7 @@ HTTP REST API 服务器（aiohttp），端口可配（默认 9092）。
 | VAD | `audio/vad/silero.py` | Silero ONNX 语音活动检测 |
 | KWS | `audio/kws/sherpa.py` | Sherpa ONNX 关键词唤醒（信心度 2.0，阈值 0.2） |
 | ASR | `audio/asr/sherpa.py` | Sherpa SenseVoice 离线语音识别（懒加载，INT8 量化） |
-| TTS | `tts/doubao.py` | 豆包 TTS（流式/一次性，PCM/MP3 自适应） |
+| TTS | `tts/doubao.py`, `tts/mlx_audio.py` | 豆包 TTS 与 MLX-Audio TTS（一次性/本地音频播放） |
 
 ### Rust 原生扩展 (native/)
 
