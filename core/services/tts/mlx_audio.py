@@ -1,31 +1,39 @@
-"""MLX-Audio TTS client for its OpenAI-compatible speech endpoint."""
+"""MLX-Audio TTS provider built on the shared OpenAI speech client."""
 
-import asyncio
 from collections.abc import Mapping
 from typing import Any
 
-import aiohttp
+from .openai import (
+    OpenAITTS,
+    OpenAITTSError,
+    OpenAITTSTimeoutError,
+)
 
 
-class MLXAudioTTSError(RuntimeError):
-    """The MLX-Audio TTS server rejected or returned an invalid response."""
+# Keep the old exception names as compatibility aliases for callers that
+# imported them from the MLX provider module.
+MLXAudioTTSError = OpenAITTSError
+MLXAudioTTSTimeoutError = OpenAITTSTimeoutError
 
 
-class MLXAudioTTSTimeoutError(MLXAudioTTSError):
-    """The MLX-Audio TTS request exceeded its configured timeout."""
+class MLXAudioTTS(OpenAITTS):
+    """Call MLX-Audio's OpenAI-compatible speech endpoint.
 
-
-class MLXAudioTTS:
-    """Call MLX-Audio's ``POST /v1/audio/speech`` endpoint."""
+    The HTTP transport and standard fields come from ``OpenAITTS``.  MLX
+    extends the request with local-model controls such as ``lang_code`` and
+    ``instruct``; its ``instruct`` field is the provider-specific equivalent
+    of OpenAI's standard ``instructions`` field.
+    """
 
     DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1"
     DEFAULT_MODEL = "Qwen3-TTS"
     DEFAULT_MODE = "custom_voice"
     DEFAULT_RESPONSE_FORMAT = "wav"
     DEFAULT_TIMEOUT = 120.0
+    REQUIRES_VOICE = False
     SUPPORTED_MODES = frozenset(("custom_voice", "voice_design"))
     SUPPORTED_RESPONSE_FORMATS = frozenset(
-        ("wav", "mp3", "flac", "ogg", "pcm")
+        ("mp3", "wav", "flac", "ogg", "opus")
     )
 
     def __init__(
@@ -39,32 +47,34 @@ class MLXAudioTTS:
         response_format: str = DEFAULT_RESPONSE_FORMAT,
         speed: float | None = 1.0,
         instruct: str | None = None,
+        instructions: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         extra_body: Mapping[str, Any] | None = None,
+        stream_format: str = "audio",
     ):
-        self.base_url = str(base_url or self.DEFAULT_BASE_URL).rstrip("/")
-        self.api_key = str(api_key or "")
-        self.model = str(model or self.DEFAULT_MODEL)
         self.mode = str(mode or self.DEFAULT_MODE).strip().lower()
         if self.mode not in self.SUPPORTED_MODES:
             supported_modes = ", ".join(sorted(self.SUPPORTED_MODES))
             raise ValueError(f"mode must be one of: {supported_modes}")
-        self.voice = str(voice).strip() if voice else None
-        if self.mode == "voice_design":
-            self.voice = None
+
         self.lang_code = str(lang_code).strip() if lang_code else None
-        self.response_format = str(
-            response_format or self.DEFAULT_RESPONSE_FORMAT
-        ).strip().lower()
-        if self.response_format not in self.SUPPORTED_RESPONSE_FORMATS:
-            supported_formats = ", ".join(sorted(self.SUPPORTED_RESPONSE_FORMATS))
-            raise ValueError(f"response_format must be one of: {supported_formats}")
-        self.speed = float(speed) if speed is not None and speed != "" else None
-        self.instruct = str(instruct) if instruct else None
-        self.timeout = float(timeout)
-        self.extra_body = dict(extra_body) if isinstance(extra_body, Mapping) else {}
-        if self.extra_body.get("stream"):
-            raise ValueError("MLXAudioTTS.synthesize does not support stream=true")
+        selected_instruct = instruct or instructions
+        self.instruct = str(selected_instruct) if selected_instruct else None
+        if self.mode == "voice_design":
+            voice = None
+
+        super().__init__(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            voice=voice,
+            instructions=None,
+            response_format=response_format,
+            speed=speed,
+            timeout=timeout,
+            extra_body=extra_body,
+            stream_format=stream_format,
+        )
 
     @classmethod
     def from_config(
@@ -89,16 +99,11 @@ class MLXAudioTTS:
             ),
             speed=config.get("speed", 1.0),
             instruct=config.get("instruct"),
+            instructions=config.get("instructions"),
             timeout=config.get("timeout", cls.DEFAULT_TIMEOUT),
             extra_body=config.get("extra_body"),
+            stream_format=config.get("stream_format", "audio"),
         )
-
-    @property
-    def speech_url(self) -> str:
-        """Return the configured base URL with the speech path appended once."""
-        if self.base_url.endswith("/audio/speech"):
-            return self.base_url
-        return f"{self.base_url}/audio/speech"
 
     def _payload(self, text: str) -> dict[str, Any]:
         if not isinstance(text, str) or not text.strip():
@@ -121,47 +126,3 @@ class MLXAudioTTS:
         if self.instruct is not None:
             payload["instruct"] = self.instruct
         return payload
-
-    def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
-
-    async def synthesize(self, text: str) -> bytes:
-        """Synthesize ``text`` and return the encoded audio response."""
-        try:
-            timeout = aiohttp.ClientTimeout(total=self.timeout)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    self.speech_url,
-                    json=self._payload(text),
-                    headers=self._headers(),
-                ) as response:
-                    audio = await response.read()
-                    if response.status < 200 or response.status >= 300:
-                        detail = audio[:500].decode("utf-8", errors="replace")
-                        raise MLXAudioTTSError(
-                            f"HTTP {response.status}: {detail or 'empty error response'}"
-                        )
-                    if not audio:
-                        raise MLXAudioTTSError(
-                            f"HTTP {response.status}: empty audio response"
-                        )
-                    content_type = getattr(response, "content_type", None)
-                    if content_type and not (
-                        content_type.startswith("audio/")
-                        or content_type
-                        in {"application/octet-stream", "binary/octet-stream"}
-                    ):
-                        raise MLXAudioTTSError(
-                            f"HTTP {response.status}: unexpected content type "
-                            f"{content_type}"
-                        )
-                    return audio
-        except asyncio.TimeoutError as exc:
-            raise MLXAudioTTSTimeoutError(
-                f"request timed out after {self.timeout:g}s"
-            ) from exc
-        except aiohttp.ClientError as exc:
-            raise MLXAudioTTSError(f"request failed: {exc}") from exc

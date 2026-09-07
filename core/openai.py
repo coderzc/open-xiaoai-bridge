@@ -5,14 +5,10 @@ including Hermes Agent API server mode.
 """
 
 import asyncio
-import os
-import tempfile
 import uuid
 from typing import Any
 
 import aiohttp
-
-import open_xiaoai_server
 
 from core.utils.base import get_env
 from core.utils.config import ConfigManager
@@ -177,15 +173,9 @@ class OpenAIManager:
     @classmethod
     def _resolve_tts_provider(cls, tts_speaker: str | None) -> str:
         """Resolve an explicit provider while preserving the legacy speaker rule."""
-        supported_providers = {"xiaoai", "doubao", "mlx_audio"}
-        if cls._tts_provider:
-            if cls._tts_provider in supported_providers:
-                return cls._tts_provider
-            logger.warning(
-                f"[OpenAI] Unknown tts_provider={cls._tts_provider!r}; "
-                "using legacy speaker-based selection"
-            )
-        return "xiaoai" if tts_speaker == cls.XIAOAI_TTS_SPEAKER else "doubao"
+        from core.services.tts.router import TTSRouter
+
+        return TTSRouter.resolve_provider(cls._tts_provider, tts_speaker)
 
     @classmethod
     async def send(cls, text: str, wait_response: bool = False) -> str | None:
@@ -391,156 +381,32 @@ class OpenAIManager:
         playback_token: int | None = None,
     ):
         """Synthesize text and play it through the speaker."""
-        try:
-            from core.ref import get_speaker
+        from core.services.tts.router import TTSRouter
 
-            resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
-            provider = cls._resolve_tts_provider(resolved_tts_speaker)
-            if provider == "xiaoai":
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-                return
-
-            if provider == "mlx_audio":
-                await cls._play_mlx_audio_tts(
-                    text,
-                    tts_speaker=resolved_tts_speaker,
-                )
-                return
-
-            from core.services.tts.doubao import DoubaoTTS
-
-            tts_config = ConfigManager.instance().get_app_config("tts.doubao", {})
-            app_id = tts_config.get("app_id")
-            access_key = tts_config.get("access_key")
-            if not app_id or not access_key:
-                logger.warning(
-                    "[OpenAI] Doubao TTS credentials not configured, falling back to xiaoai native tts"
-                )
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-                return
-
-            speaker_id = resolved_tts_speaker or tts_config.get(
-                "default_speaker", "zh_female_xiaohe_uranus_bigtts"
-            )
-            tts = DoubaoTTS(
-                app_id=app_id,
-                access_key=access_key,
-                speaker=speaker_id,
-            )
-            resolved_format = tts.resolve_audio_format(text)
-            if tts_config.get("stream", False):
-                await open_xiaoai_server.tts_stream_play(
-                    text,
-                    app_id=app_id,
-                    access_key=access_key,
-                    resource_id=tts.resource_id,
-                    speaker=speaker_id,
-                    speed=cls._tts_speed,
-                    format=resolved_format,
-                    sample_rate=24000,
-                    playback_token=playback_token,
-                )
-            else:
-                await open_xiaoai_server.tts_play(
-                    text,
-                    app_id=app_id,
-                    access_key=access_key,
-                    resource_id=tts.resource_id,
-                    speaker=speaker_id,
-                    speed=cls._tts_speed,
-                    format=resolved_format,
-                    sample_rate=24000,
-                    playback_token=playback_token,
-                )
-        except Exception as exc:
-            logger.error(f"[OpenAI] Error playing response with TTS: {exc}")
-            try:
-                from core.ref import get_speaker
-
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-            except Exception as fallback_error:
-                logger.error(f"[OpenAI] Fallback TTS also failed: {fallback_error}")
+        resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
+        await TTSRouter.play(
+            text,
+            configured_provider=cls._tts_provider,
+            tts_speaker=resolved_tts_speaker,
+            tts_speed=cls._tts_speed,
+            playback_token=playback_token,
+            log_prefix="OpenAI",
+        )
 
     @classmethod
-    async def _play_mlx_audio_tts(
+    async def _play_openai_compatible_tts(
         cls,
         text: str,
         tts_speaker: str | None = None,
+        provider: str = "openai",
     ):
-        """Synthesize through MLX-Audio and play the audio file."""
-        from core.ref import get_speaker
-        from core.services.tts.mlx_audio import (
-            MLXAudioTTS,
-            MLXAudioTTSTimeoutError,
-        )
+        """Compatibility wrapper for the shared TTS router."""
+        from core.services.tts.router import TTSRouter
 
-        tts_config = ConfigManager.instance().get_app_config(
-            "tts.mlx_audio", {}
+        await TTSRouter.play(
+            text,
+            configured_provider=provider,
+            tts_speaker=tts_speaker,
+            tts_speed=cls._tts_speed,
+            log_prefix="OpenAI",
         )
-        voice_override = (
-            tts_speaker
-            if tts_speaker and tts_speaker != cls.XIAOAI_TTS_SPEAKER
-            else None
-        )
-        tts = MLXAudioTTS.from_config(
-            tts_config,
-            voice_override=voice_override,
-        )
-        logger.info(
-            "[MLX-Audio TTS] Requesting speech: "
-            f"url={tts.speech_url}, model={tts.model}, voice={tts.voice}, "
-            f"format={tts.response_format}"
-        )
-
-        temporary_path: str | None = None
-        try:
-            audio = await tts.synthesize(text)
-            safe_format = "".join(
-                character for character in tts.response_format.lower() if character.isalnum()
-            ) or "wav"
-            with tempfile.NamedTemporaryFile(
-                prefix="mlx_audio_tts_",
-                suffix=f".{safe_format}",
-                delete=False,
-            ) as audio_file:
-                temporary_path = audio_file.name
-                audio_file.write(audio)
-
-            speaker = get_speaker()
-            if not speaker:
-                raise RuntimeError("Speaker manager is not available")
-            played = await speaker.play_server_file(
-                file_path=temporary_path,
-                blocking=True,
-            )
-            if played is False:
-                raise RuntimeError("SpeakerManager.play_server_file returned false")
-        except MLXAudioTTSTimeoutError:
-            logger.warning(
-                "[MLX-Audio TTS] Request timed out; "
-                "falling back to xiaoai native tts"
-            )
-            raise
-        except Exception as exc:
-            logger.error(
-                "[MLX-Audio TTS] Request or playback failed: "
-                f"{type(exc).__name__}: {exc}; falling back to xiaoai native tts"
-            )
-            raise
-        finally:
-            if temporary_path:
-                try:
-                    os.unlink(temporary_path)
-                except FileNotFoundError:
-                    pass
-                except OSError as exc:
-                    logger.warning(
-                        "[MLX-Audio TTS] Failed to remove temporary "
-                        f"audio file {temporary_path}: {exc}"
-                    )

@@ -12,7 +12,7 @@
 
 [📺 演示 ①](https://www.bilibili.com/video/BV1DHcBz1Ex7) · [📺 演示 ②](https://www.bilibili.com/video/BV1UQQSBHEvg)
 
-[📖 快速开始](#-快速开始) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🐾 QwenPaw 集成](#-qwenpaw-集成) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
+[📖 快速开始](#-快速开始) · [🔊 TTS 配置](#-tts-配置) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🐾 QwenPaw 集成](#-qwenpaw-集成) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
 
 > 本项目受 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 启发，并参考其 `examples/xiaozhi/` 示例演进而来，现已作为独立项目持续维护。
 
@@ -344,6 +344,141 @@ curl -X POST http://localhost:9092/api/interrupt
 
 ***
 
+## 🔊 TTS 配置
+
+Bridge 的 TTS provider 配置跟随各个后端，配置层级保持不变：
+
+- `openai.tts_provider`、`openclaw.tts_provider` 和 `qwenpaw.tts_provider` 都可以选择小爱原生、豆包、官方 OpenAI / 兼容服务或本地 MLX-Audio。
+- 各后端继续使用自己的 `tts_speaker`、`session_tts_speakers` 或 `agent_tts_speakers`；不填写 `tts_provider` 时，保持旧逻辑：`xiaoai` 使用小爱原生，其他音色 ID 使用豆包。
+
+### 选择 TTS provider
+
+在对应后端配置中增加 `tts_provider` 即可，原有的 `tts_speaker` 不需要删除：
+
+```python
+"openai": {
+    "tts_provider": "mlx_audio",  # xiaoai / doubao / openai / mlx_audio
+    "tts_speaker": "xiaoai",
+}
+```
+
+同样的字段也可以放在 `openclaw` 和 `qwenpaw` 中：
+
+```python
+"openclaw": {
+    "tts_provider": "doubao",
+    "tts_speaker": "zh_male_raphael_bigtts",
+},
+"qwenpaw": {
+    "tts_provider": "xiaoai",
+    "tts_speaker": "xiaoai",
+}
+```
+
+| `tts_provider` | 运行位置 | 额外配置 |
+|---|---|---|
+| `xiaoai` | 音箱本地原生 TTS | 无，音色由小爱设备决定 |
+| `doubao` | 火山引擎云端 TTS | `tts.doubao`，需要 `app_id` 和 `access_key` |
+| `openai` | 官方 OpenAI 或其他兼容服务 | `tts.openai` |
+| `mlx_audio` | Mac 本地 MLX-Audio 服务 | `tts.mlx_audio` |
+
+### 小爱原生 TTS
+
+不需要启动额外服务，直接使用音箱自带的合成能力：
+
+```python
+"openai": {
+    "tts_provider": "xiaoai",
+    "tts_speaker": "xiaoai",
+}
+```
+
+### 豆包 TTS
+
+先在 [火山引擎语音合成控制台](https://www.volcengine.com/docs/6561/1871062) 开通服务，然后配置鉴权信息和默认音色：
+
+```python
+"tts": {
+    "doubao": {
+        "app_id": "你的 App ID",
+        "access_key": "你的 Access Key",
+        "default_speaker": "zh_female_vv_uranus_bigtts",
+        "audio_format": "pcm",
+        "stream": True,
+    },
+},
+"openai": {
+    "tts_provider": "doubao",
+    # 填豆包音色 ID 可覆盖 default_speaker；填 xiaoai 则使用 default_speaker
+    "tts_speaker": "xiaoai",
+}
+```
+
+音色 ID 见 [火山引擎音色库](https://www.volcengine.com/docs/6561/1257544?lang=zh)。豆包的流式配置和声音复刻说明见下方 [豆包 TTS 常见问题](#-豆包-tts-常见问题)。
+
+### OpenAI / 兼容服务 TTS
+
+适用于官方 OpenAI，以及实现 `POST /v1/audio/speech` 的其他服务。在需要使用它的后端中配置 `tts_provider = "openai"`，然后填写共享的 `tts.openai`：
+
+```python
+"tts": {
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "your-api-key",
+        "model": "gpt-4o-mini-tts",
+        "voice": "alloy",
+        "instructions": "自然、放松地说话，不要播音腔。",
+        "response_format": "wav",
+        "speed": 1.0,
+        "timeout": 120,
+        "stream_format": "audio",
+        "extra_body": {},
+    },
+},
+"openai": {
+    "tts_provider": "openai",
+    "tts_speaker": "xiaoai",  # 改成具体 voice ID 可覆盖 tts.openai.voice
+}
+```
+
+适配器发送标准非流式字段：`model`、`input`、`voice`、`instructions`、`response_format` 和 `speed`。当前音箱播放链路支持 `mp3`、`flac`、`wav`、`ogg`、`pcm`；协议层虽然接受 `opus` 和 `aac`，但这两种格式不适合作为 Bridge 的音箱播放格式。当前不支持流式 TTS，设置 `stream_format = "sse"` 或在 `extra_body` 中启用 `stream` 会明确报错。
+
+### MLX-Audio TTS
+
+适用于 Apple Silicon 本地部署的 [MLX-Audio](https://github.com/Blaizzy/mlx-audio) 服务。在需要使用它的后端中配置 `tts_provider = "mlx_audio"`；Bridge 在 Docker 中运行时，通过 `host.docker.internal` 访问 Mac 宿主机：
+
+```python
+"tts": {
+    "mlx_audio": {
+        "base_url": "http://host.docker.internal:8000/v1",
+        "api_key": "",
+        "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-6bit",
+        "mode": "voice_design",  # 或 "custom_voice"
+        "voice": None,             # VoiceDesign 不需要预设音色
+        "lang_code": "Chinese",
+        "response_format": "wav",
+        "speed": 1.0,
+        "instruct": "年轻男性，自然聊天，标准普通话，无明显地域口音。",
+        "timeout": 120,
+        "extra_body": {},
+    },
+},
+"openai": {
+    "tts_provider": "mlx_audio",
+    "tts_speaker": "xiaoai",
+}
+```
+
+`voice_design` 用 `instruct` 描述音色，`custom_voice` 使用模型提供的 `voice`。适配器复用 OpenAI TTS 的 HTTP、鉴权、超时和错误处理，同时把标准 `instructions` 映射为 MLX-Audio 的 `instruct`，并额外支持 `lang_code` 等本地模型参数。协议层支持 `wav`、`mp3`、`flac`、`ogg` 和 `opus`；交给音箱播放时建议使用 `wav`、`mp3`、`flac` 或 `ogg`，不支持 `stream=true`。
+
+### 音频格式与流式限制
+
+- 本地音箱播放优先使用 `wav`；云端服务可根据延迟和带宽选择 `mp3` 或 `pcm`。
+- OpenAI / MLX-Audio 适配器当前采用“完整音频文件 → 音箱播放”，不把 SSE 音频流当作完整文件处理。
+- 豆包 TTS 保留独立的 `stream` 配置，可使用 PCM 或 MP3 流式播放。
+
+***
+
 ## 🔌 OpenAI 兼容服务
 
 用于接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等兼容 OpenAI Chat Completions 的服务。它是独立后端，不依赖 OpenClaw 协议。
@@ -363,43 +498,12 @@ curl -X POST http://localhost:9092/api/interrupt
     "temperature": 0.7,
     "max_tokens": 512,
     "history_max_messages": 20,
-    "tts_provider": "mlx_audio",  # 或 "xiaoai"、"doubao"
+    "tts_provider": "mlx_audio",  # 详见「🔊 TTS 配置」
     "tts_speaker": "xiaoai",
 }
 ```
 
-### 🧠 MLX-Audio TTS
-
-可在 Apple Silicon 上本地运行 [MLX-Audio](https://github.com/Blaizzy/mlx-audio)，通过它提供的 OpenAI-compatible `/v1/audio/speech` 接口合成语音。桥接器使用完整音频文件播放，推荐输出 `wav`。
-
-在 `config.py` 中增加配置：
-
-```python
-"tts": {
-    "mlx_audio": {
-        # Docker 中访问宿主机服务；本地运行时可改为 127.0.0.1
-        "base_url": "http://host.docker.internal:8000/v1",
-        "api_key": "",
-        "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-6bit",
-        "mode": "voice_design",  # 或 "custom_voice"
-        "voice": None,             # VoiceDesign 不需要预设音色
-        "lang_code": "Chinese",
-        "response_format": "wav",
-        "speed": 1.0,
-        "instruct": "年轻男性，自然聊天，标准普通话，无明显地域口音。",
-    },
-},
-```
-
-同时设置：
-
-```python
-"openai": {
-    "tts_provider": "mlx_audio",
-}
-```
-
-`voice_design` 使用 `instruct` 描述音色；`custom_voice` 使用 MLX-Audio 模型提供的 `voice`。当前适配器支持 `wav`、`mp3`、`flac`、`ogg` 和 `pcm`，不支持 `stream=true`。
+TTS provider 的选择和音频参数见上方 [🔊 TTS 配置](#-tts-配置)。
 
 触发连续对话时，在 `before_wakeup` 中返回 `"openai"`：
 
@@ -699,12 +803,21 @@ async def after_wakeup(speaker, source=None, session_key=None):
 
 ### 🎵 OpenClaw TTS 音色
 
-`openclaw.tts_speaker` 支持两种值：
+`openclaw.tts_provider` 决定使用哪一种 TTS provider，`openclaw.tts_speaker` 决定音色或 voice。现在可以这样配置：
+
+```python
+"openclaw": {
+    "tts_provider": "mlx_audio",
+    "tts_speaker": "xiaoai",  # 使用 tts.mlx_audio.voice 或 instruct
+}
+```
+
+如果不填写 `tts_provider`，则保持旧行为，`tts_speaker` 支持两种值：
 
 | 值          | 效果       | 说明                                                    |
 | ---------- | -------- | ----------------------------------------------------- |
 | `"xiaoai"` | 小爱原生 TTS | 零配置即可使用，音色由设备决定                                       |
-| 豆包音色 ID    | 豆包语音合成   | 需配置 `tts.doubao` 的 `app_id` 和 `access_key`，详见 [豆包 TTS 章节](#-豆包-tts) |
+| 豆包音色 ID    | 豆包语音合成   | 需配置 `tts.doubao` 的 `app_id` 和 `access_key`，详见 [TTS 配置](#-tts-配置) |
 
 如果希望不同 Agent 使用不同音色，可以配置 `openclaw.agent_tts_speakers`。它会根据当前 `session_key` 中的 `agentId` 选择对应音色；未命中时回退到 `openclaw.tts_speaker`。
 
@@ -1049,24 +1162,11 @@ APP_CONFIG = {
     }
     ```
 
-### 🎵 豆包 TTS
+### 🎵 豆包 TTS 常见问题
 
 1. **如何配置豆包 TTS？**
 
-    1. 开通[火山引擎语音合成服务](https://www.volcengine.com/docs/6561/1871062)，获取 App ID 和 Access Key（[接入文档](https://www.volcengine.com/docs/6561/1598757?lang=zh)）
-    2. 填入配置：
-
-    ```python
-    "tts": {
-        "doubao": {
-            "app_id": "你的 App ID",
-            "access_key": "你的 Access Key",
-            "default_speaker": "zh_female_cancan_mars_bigtts",  # 默认音色，可选列表见下方
-        }
-    }
-    ```
-
-    音色列表：[火山引擎音色库](https://www.volcengine.com/docs/6561/1257544?lang=zh)
+    配置示例、provider 选择和音色说明见上方 [🔊 TTS 配置](#-tts-配置) 的「豆包 TTS」小节。
 
 2. **如何使用声音复刻？**
 

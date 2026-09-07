@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 
 tts_module = importlib.import_module("core.services.tts.mlx_audio")
+protocol_module = importlib.import_module("core.services.tts.openai")
 MLXAudioTTS = tts_module.MLXAudioTTS
 MLXAudioTTSTimeoutError = tts_module.MLXAudioTTSTimeoutError
 
@@ -83,8 +84,8 @@ class MLXAudioTTSTest(unittest.IsolatedAsyncioTestCase):
             instruct="年轻中文男声，标准普通话，无明显地域口音。",
         )
 
-        with patch.object(tts_module.aiohttp, "ClientSession", return_value=session):
-            with patch.object(tts_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
+        with patch.object(protocol_module.aiohttp, "ClientSession", return_value=session):
+            with patch.object(protocol_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
                 await tts.synthesize("你好，这是一次音色测试。")
 
         self.assertEqual(
@@ -114,8 +115,8 @@ class MLXAudioTTSTest(unittest.IsolatedAsyncioTestCase):
             extra_body={"custom_field": "enabled"},
         )
 
-        with patch.object(tts_module.aiohttp, "ClientSession", return_value=session):
-            with patch.object(tts_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
+        with patch.object(protocol_module.aiohttp, "ClientSession", return_value=session):
+            with patch.object(protocol_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
                 audio = await tts.synthesize("你好")
 
         self.assertEqual(b"RIFF-audio", audio)
@@ -145,8 +146,8 @@ class MLXAudioTTSTest(unittest.IsolatedAsyncioTestCase):
         session = FakeSession(FakeResponse(status=503, body=b"service unavailable"))
         tts = MLXAudioTTS(base_url="http://mlx-audio:8000/v1")
 
-        with patch.object(tts_module.aiohttp, "ClientSession", return_value=session):
-            with patch.object(tts_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
+        with patch.object(protocol_module.aiohttp, "ClientSession", return_value=session):
+            with patch.object(protocol_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
                 with self.assertRaisesRegex(RuntimeError, "HTTP 503.*service unavailable"):
                     await tts.synthesize("你好")
 
@@ -154,8 +155,8 @@ class MLXAudioTTSTest(unittest.IsolatedAsyncioTestCase):
         session = FakeSession(enter_error=asyncio.TimeoutError())
         tts = MLXAudioTTS(base_url="http://mlx-audio:8000/v1", timeout=3)
 
-        with patch.object(tts_module.aiohttp, "ClientSession", return_value=session):
-            with patch.object(tts_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
+        with patch.object(protocol_module.aiohttp, "ClientSession", return_value=session):
+            with patch.object(protocol_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
                 with self.assertRaises(MLXAudioTTSTimeoutError):
                     await tts.synthesize("你好")
 
@@ -165,8 +166,8 @@ class MLXAudioTTSTest(unittest.IsolatedAsyncioTestCase):
         )
         tts = MLXAudioTTS(base_url="http://mlx-audio:8000/v1")
 
-        with patch.object(tts_module.aiohttp, "ClientSession", return_value=session):
-            with patch.object(tts_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
+        with patch.object(protocol_module.aiohttp, "ClientSession", return_value=session):
+            with patch.object(protocol_module.aiohttp, "ClientTimeout", side_effect=lambda total: total):
                 with self.assertRaisesRegex(RuntimeError, "unexpected content type"):
                     await tts.synthesize("你好")
 
@@ -178,9 +179,18 @@ class MLXAudioTTSTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "does not support stream=true"):
             MLXAudioTTS(extra_body={"stream": True})
 
-    def test_output_format_must_be_supported_by_bridge_decoder(self):
+    def test_standard_instructions_are_mapped_to_mlx_instruct(self):
+        tts = MLXAudioTTS(instructions="自然、放松地说话")
+
+        self.assertEqual(
+            "自然、放松地说话",
+            tts._payload("你好")["instruct"],
+        )
+        self.assertNotIn("instructions", tts._payload("你好"))
+
+    def test_output_format_must_be_supported_by_mlx_server(self):
         with self.assertRaisesRegex(ValueError, "response_format must be one of"):
-            MLXAudioTTS(response_format="opus")
+            MLXAudioTTS(response_format="aac")
 
 
 class MLXAudioTTSFallbackTest(unittest.IsolatedAsyncioTestCase):
