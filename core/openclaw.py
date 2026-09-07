@@ -75,6 +75,7 @@ class OpenClawManager:
     # Config
     XIAOAI_TTS_SPEAKER = "xiaoai"  # Special value: use XiaoAI native TTS instead of Doubao
     _enabled = False
+    _tts_provider: str | None = None
     _tts_speaker = None  # Custom speaker for OpenClaw TTS (uses tts.doubao.default_speaker if not set)
     _agent_tts_speakers: dict[str, str] = {}  # Per-agent speaker overrides
     _tts_speed = 1.0  # TTS speed (0.5-2.0, 1.0 is normal)
@@ -129,6 +130,7 @@ class OpenClawManager:
         cfg_token = config.get("token", "")
         cfg_session = config.get("session_key", "agent:main:open-xiaoai-bridge")
         cfg_identity_path = config.get("identity_path")
+        cfg_tts_provider = config.get("tts_provider")
         cfg_tts_speaker = config.get("tts_speaker", None)
         cfg_agent_tts_speakers = config.get("agent_tts_speakers", {})
         cfg_tts_speed = config.get("tts_speed", 1.0)
@@ -149,6 +151,11 @@ class OpenClawManager:
                 cls._enabled = False  # Default to disabled if no env var set
 
         # TTS config: only from config file
+        cls._tts_provider = (
+            str(cfg_tts_provider).strip().lower()
+            if cfg_tts_provider
+            else None
+        )
         cls._tts_speaker = cfg_tts_speaker
         cls._agent_tts_speakers = (
             {
@@ -961,100 +968,18 @@ class OpenClawManager:
         tts_speaker: str | None = None,
         playback_token: int | None = None,
     ):
-        """Synthesize text using Doubao TTS and play through speaker."""
-        try:
-            from core.ref import get_speaker
+        """Synthesize text using the configured provider and play it."""
+        from core.services.tts.router import TTSRouter
 
-            resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
-
-            # Special value: use XiaoAI native TTS directly
-            if resolved_tts_speaker == cls.XIAOAI_TTS_SPEAKER:
-                logger.info(
-                    f"[OpenClaw] Using OpenClaw TTS speaker: session_key={cls._session_key}, "
-                    f"speaker={resolved_tts_speaker}"
-                )
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-                return
-
-            from core.services.tts.doubao import DoubaoTTS
-
-            # Get TTS config
-            tts_config = ConfigManager.instance().get_app_config("tts.doubao", {})
-            app_id = tts_config.get("app_id")
-            access_key = tts_config.get("access_key")
-
-            if not app_id or not access_key:
-                logger.warning("[OpenClaw] Doubao TTS credentials not configured, falling back to xiaoai native tts")
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-                return
-
-            speaker_id = resolved_tts_speaker or tts_config.get(
-                "default_speaker", "zh_female_xiaohe_uranus_bigtts"
-            )
-            logger.info(
-                f"[OpenClaw] Using OpenClaw TTS speaker: session_key={cls._session_key}, "
-                f"speaker={speaker_id}, speed={cls._tts_speed}"
-            )
-
-            tts = DoubaoTTS(
-                app_id=app_id,
-                access_key=access_key,
-                speaker=speaker_id,
-            )
-            resolved_format = tts.resolve_audio_format(text)
-
-            use_stream = tts_config.get("stream", False)
-            speaker = get_speaker()
-            if not speaker:
-                logger.error("[OpenClaw] Speaker not available")
-                return
-
-            if use_stream:
-                import open_xiaoai_server
-                try:
-                    await open_xiaoai_server.tts_stream_play(
-                        text,
-                        app_id=app_id,
-                        access_key=access_key,
-                        resource_id=tts.resource_id,
-                        speaker=speaker_id,
-                        speed=cls._tts_speed,
-                        format=resolved_format,
-                        sample_rate=24000,
-                        playback_token=playback_token,
-                    )
-                    logger.debug("[OpenClaw] TTS stream playback completed")
-                except Exception:
-                    raise
-            else:
-                import open_xiaoai_server
-
-                await open_xiaoai_server.tts_play(
-                    text,
-                    app_id=app_id,
-                    access_key=access_key,
-                    resource_id=tts.resource_id,
-                    speaker=speaker_id,
-                    speed=cls._tts_speed,
-                    format=resolved_format,
-                    sample_rate=24000,
-                    playback_token=playback_token,
-                )
-                logger.debug("[OpenClaw] Response playback completed")
-
-        except Exception as e:
-            logger.error(f"[OpenClaw] Error playing response with TTS: {e}")
-            try:
-                from core.ref import get_speaker
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-            except Exception as fallback_error:
-                logger.error(f"[OpenClaw] Fallback TTS also failed: {fallback_error}")
+        resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
+        await TTSRouter.play(
+            text,
+            configured_provider=cls._tts_provider,
+            tts_speaker=resolved_tts_speaker,
+            tts_speed=cls._tts_speed,
+            playback_token=playback_token,
+            log_prefix="OpenClaw",
+        )
 
 
 # No auto-initialization - call OpenClawManager.initialize_from_config() explicitly
