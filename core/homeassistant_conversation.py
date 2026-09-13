@@ -289,13 +289,50 @@ class HomeAssistantConversationController(
         )
 
         # =====================================================
-        # 9. Check continue_conversation
+        # 9. Whether to keep listening for the next turn
+        #
+        # IMPORTANT:
+        #
+        # Home Assistant 的 continue_conversation 字段语义是
+        # "HA 本身是否需要用户针对一次追问再回答一句"
+        # （例如设置计时器时缺少时长，HA 反问"请问多久？"）。
+        #
+        # 它 **不代表** "是否应该保持这次唤醒的连续对话打开"。
+        # 绝大多数已经执行完的指令（比如"打开客厅灯"），
+        # HA 都会返回 continue_conversation=False，
+        # 如果直接用它来决定是否退出，就会导致每次唤醒
+        # 执行完一条指令就立刻退出连续对话，无法连续下达
+        # 多条指令。
+        #
+        # 因此这里改用独立的配置开关
+        # homeassistant.continuous_conversation 来控制：
+        #
+        #   True  (默认)：
+        #       唤醒一次即可连续下达多条指令，
+        #       直到超时无人说话，或说出退出关键词
+        #       （exit_keywords）才结束。
+        #
+        #   False：
+        #       每次唤醒只执行一条指令就结束对话，
+        #       但如果 HA 明确要求追问
+        #       （continue_conversation=True），
+        #       仍会等待用户回答这一句追问，
+        #       避免打断 HA 自身的多轮澄清流程。
         # =====================================================
 
-        if not self.backend.continue_conversation:
+        continuous_conversation = self.backend._cfg(
+            "continuous_conversation",
+            True,
+        )
+
+        if (
+            not continuous_conversation
+            and not self.backend.continue_conversation
+        ):
             logger.info(
                 "[HomeAssistant Conv] "
-                "Agent requested conversation end",
+                "Single-turn mode (continuous_conversation=False), "
+                "ending after this command",
                 module=self.LOG_MODULE,
             )
 

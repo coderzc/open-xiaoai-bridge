@@ -371,6 +371,23 @@ APP_CONFIG = {
         # 是否保持 Home Assistant conversation_id
         "keep_conversation": True,
 
+        # 是否开启连续对话
+        #
+        # True（默认）：
+        #     唤醒一次后可连续下达多条指令
+        #     （例如"打开客厅灯" -> "再打开卧室灯" -> "调到50%亮度"），
+        #     直到静音超过 timeout 秒，或说出 exit_keywords
+        #     中的退出词才结束对话。
+        #
+        # False：
+        #     每次唤醒只执行一条指令就结束对话
+        #     （更接近"一次唤醒一次命令"的传统语音助手体验）。
+        #     注意：即使关闭，如果 HA 的 Agent 自身需要追问
+        #     （例如设置计时器时缺少时长，返回了
+        #     continue_conversation=True），仍会等待一轮
+        #     用户回答，不会打断 HA 自己的澄清流程。
+        "continuous_conversation": True,
+
         # 本地 session 标识
         "session_key": "homeassistant:open-xiaoai-bridge",
 
