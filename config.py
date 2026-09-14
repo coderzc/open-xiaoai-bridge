@@ -251,7 +251,7 @@ APP_CONFIG = {
         "base_url": "http://192.168.100.80:8123",
 
         # Home Assistant Long-Lived Access Token
-        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI0NGM5MTU2NjNlOWQ0YThiOTdjMWM2ZWZiZTJiMzY3OCIsImlhdCI6MTc4ODY2NTUzNCwiZXhwIjoyMTA0MDI1NTM0fQ.mMEI6pXEV-oVo78BdHHrGnGjvJHly5k6CnMLj8JjAq4",
+        "token": "Home Assistant Long-Lived Access Token",
 
         # Conversation Agent
         #
