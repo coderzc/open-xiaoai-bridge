@@ -2,10 +2,8 @@
 
 This module manages the main application flow, coordinating between:
 - XiaoAI (Xiaomi speaker service)
-- XiaoZhi (AI conversation service)
 - OpenClaw (External integration)
-- OpenAI (OpenAI-compatible chat service)
-- QwenPaw (QwenPaw personal agent workstation)
+- Home Assistant (Conversation API integration, config-driven — see config.py)
 - Audio system (VAD, KWS, Codec)
 """
 
@@ -14,9 +12,8 @@ import os
 import threading
 import time
 
-from core.xiaozhi import XiaoZhi
 from core.xiaoai import XiaoAI
-from core.ref import set_xiaozhi, set_app
+from core.ref import set_app
 from core.utils.config import ConfigManager
 from core.utils.logger import logger
 from core.services.protocols.typing import (
@@ -24,8 +21,6 @@ from core.services.protocols.typing import (
     EventType,
 )
 from core.openclaw import OpenClawManager
-from core.openai import OpenAIManager
-from core.qwenpaw import QwenPawManager
 from core.services.api_server import APIServer
 
 
@@ -37,40 +32,32 @@ class MainApp:
     @classmethod
     def instance(
         cls,
-        enable_xiaozhi: bool = True,
         enable_openclaw: bool = False,
-        enable_openai: bool = False,
-        enable_qwenpaw: bool = False,
     ):
         """Get singleton instance.
 
         Args:
-            enable_xiaozhi: Whether to enable XiaoZhi AI connection (default: True)
             enable_openclaw: Whether to enable OpenClaw connection (default: False)
-            enable_qwenpaw: Whether to enable QwenPaw connection (default: False)
+
+        Note:
+            Home Assistant is not gated by a flag here — it is enabled purely
+            via config.py's ``homeassistant.enabled`` and dispatched through
+            WakeupSessionManager (see core/wakeup_session.py).
         """
         if cls._instance is None:
             cls._instance = MainApp(
-                enable_xiaozhi=enable_xiaozhi,
                 enable_openclaw=enable_openclaw,
-                enable_openai=enable_openai,
-                enable_qwenpaw=enable_qwenpaw,
             )
         return cls._instance
 
     def __init__(
         self,
-        enable_xiaozhi: bool = True,
         enable_openclaw: bool = False,
-        enable_openai: bool = False,
-        enable_qwenpaw: bool = False,
     ):
         """Initialize the main application.
 
         Args:
-            enable_xiaozhi: Whether to enable XiaoZhi AI connection
             enable_openclaw: Whether to enable OpenClaw connection
-            enable_qwenpaw: Whether to enable QwenPaw connection
         """
         if MainApp._instance is not None:
             raise Exception("MainApp is singleton, use instance() to get instance")
@@ -80,10 +67,7 @@ class MainApp:
         self.config = ConfigManager.instance()
 
         # Feature flags
-        self._enable_xiaozhi = enable_xiaozhi
         self._enable_openclaw = enable_openclaw
-        self._enable_openai = enable_openai
-        self._enable_qwenpaw = enable_qwenpaw
 
         # Device state
         self.device_state = DeviceState.IDLE
@@ -104,11 +88,7 @@ class MainApp:
         # Events
         self.events = {
             EventType.SCHEDULE_EVENT: threading.Event(),
-            EventType.AUDIO_INPUT_READY_EVENT: threading.Event(),
         }
-
-        # XiaoZhi instance (protocol layer)
-        self.xiaozhi = None
 
         # API Server
         self.api_server = None
@@ -116,12 +96,17 @@ class MainApp:
 
         set_app(self)
 
-    @property
-    def protocol(self):
-        """Access XiaoZhi protocol for backward compatibility."""
-        if self.xiaozhi:
-            return self.xiaozhi.protocol
-        return None
+    def _homeassistant_enabled(self) -> bool:
+        """Whether Home Assistant integration is enabled via config.py.
+
+        Home Assistant has no CLI/env feature flag (unlike OpenClaw); it is
+        purely config-driven. Any check that needs to know "should the
+        wakeup/audio pipeline be running for an external backend" must
+        include this, or Home Assistant will silently never receive audio.
+        """
+        return bool(
+            self.config.get_app_config("homeassistant.enabled", False)
+        )
 
     def run(self, enable_api_server: bool = False):
         """Start the main application.
@@ -131,17 +116,13 @@ class MainApp:
         """
         self._enable_api_server = enable_api_server
 
+        homeassistant_enabled = self._homeassistant_enabled()
+
         # Check audio input status
         audio_input_enabled = os.environ.get(
             "AUDIO_INPUT_ENABLE", "true"
         ).strip().lower() in ("true", "1", "yes", "on")
-        
-        if not audio_input_enabled and self._enable_xiaozhi:
-            raise RuntimeError(
-                "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but XiaoZhi is enabled. "
-                "Either enable audio input or disable XiaoZhi."
-            )
-        
+
         if not audio_input_enabled:
             local_asr_backends = []
             if (
@@ -151,17 +132,11 @@ class MainApp:
             ):
                 local_asr_backends.append("OpenClaw")
             if (
-                self._enable_openai
-                and self.config.get_app_config("openai.input_mode", "local_asr")
+                homeassistant_enabled
+                and self.config.get_app_config("homeassistant.input_mode", "xiaoai_asr")
                 == "local_asr"
             ):
-                local_asr_backends.append("OpenAI")
-            if (
-                self._enable_qwenpaw
-                and self.config.get_app_config("qwenpaw.input_mode", "local_asr")
-                == "local_asr"
-            ):
-                local_asr_backends.append("QwenPaw")
+                local_asr_backends.append("Home Assistant")
             if local_asr_backends:
                 raise RuntimeError(
                     "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but "
@@ -181,25 +156,10 @@ class MainApp:
         # Initialize XiaoAI service
         asyncio.run_coroutine_threadsafe(XiaoAI.init_xiaoai(), self.loop)
 
-        if self._enable_xiaozhi:
-            # Create XiaoZhi instance
-            self.xiaozhi = XiaoZhi.instance()
-            self.xiaozhi.set_app(self)
-            set_xiaozhi(self.xiaozhi)
-
-            # Initialize XiaoZhi connection
-            asyncio.run_coroutine_threadsafe(self._init_xiaozhi(), self.loop)
-
         # Initialize OpenClaw if enabled
         if self._enable_openclaw:
             OpenClawManager.initialize_from_config()
             asyncio.run_coroutine_threadsafe(OpenClawManager.connect(), self.loop)
-        if self._enable_openai:
-            OpenAIManager.initialize_from_config()
-            asyncio.run_coroutine_threadsafe(OpenAIManager.connect(), self.loop)
-        if self._enable_qwenpaw:
-            QwenPawManager.initialize_from_config()
-            asyncio.run_coroutine_threadsafe(QwenPawManager.connect(), self.loop)
 
         # Start API Server if enabled
         if self._enable_api_server:
@@ -214,12 +174,12 @@ class MainApp:
         main_loop_thread.start()
 
         # Start audio services
-        if (
-            self._enable_xiaozhi
-            or self._enable_openclaw
-            or self._enable_openai
-            or self._enable_qwenpaw
-        ):
+        #
+        # IMPORTANT: Home Assistant is config-driven (no enable_* flag), so
+        # it must be checked explicitly here — otherwise enabling only
+        # Home Assistant (OpenClaw disabled) would never start VAD/KWS and
+        # its custom wake words would never fire.
+        if self._enable_openclaw or homeassistant_enabled:
             # Check audio input via env var (same as Rust), default True
             # Supports: "true"/"false", "1"/"0", "yes"/"no", "on"/"off"
             audio_input_enabled = os.environ.get(
@@ -242,16 +202,9 @@ class MainApp:
                     == "local_asr"
                 )
                 or (
-                    self._enable_openai
+                    homeassistant_enabled
                     and self.config.get_app_config(
-                        "openai.input_mode", "local_asr"
-                    )
-                    == "local_asr"
-                )
-                or (
-                    self._enable_qwenpaw
-                    and self.config.get_app_config(
-                        "qwenpaw.input_mode", "local_asr"
+                        "homeassistant.input_mode", "xiaoai_asr"
                     )
                     == "local_asr"
                 )
@@ -302,12 +255,6 @@ class MainApp:
 
             time.sleep(1)
 
-    async def _init_xiaozhi(self):
-        """Initialize XiaoZhi connection and audio."""
-        self.device_state = DeviceState.CONNECTING
-        await self.xiaozhi.connect()
-        self.xiaozhi.init_audio()
-
     def _main_loop(self):
         """Main application loop."""
         self.running = True
@@ -317,10 +264,7 @@ class MainApp:
                 if event.is_set():
                     event.clear()
 
-                    if event_type == EventType.AUDIO_INPUT_READY_EVENT:
-                        if self.xiaozhi:
-                            self.xiaozhi.handle_input_audio()
-                    elif event_type == EventType.SCHEDULE_EVENT:
+                    if event_type == EventType.SCHEDULE_EVENT:
                         self._process_scheduled_tasks()
 
             time.sleep(0.01)
@@ -369,9 +313,6 @@ class MainApp:
         self.shutdown_requested = True
         self.running = False
 
-        if self.xiaozhi:
-            self.xiaozhi.shutdown()
-
         if self.api_server:
             asyncio.run_coroutine_threadsafe(
                 self.api_server.stop(), self.loop
@@ -381,14 +322,6 @@ class MainApp:
         if OpenClawManager.is_connected():
             asyncio.run_coroutine_threadsafe(
                 OpenClawManager.close(), self.loop
-            )
-        if OpenAIManager.is_enabled():
-            asyncio.run_coroutine_threadsafe(
-                OpenAIManager.close(), self.loop
-            )
-        if QwenPawManager.is_enabled():
-            asyncio.run_coroutine_threadsafe(
-                QwenPawManager.close(), self.loop
             )
 
         if self.loop and self.loop.is_running():
@@ -401,11 +334,6 @@ class MainApp:
             self.config_watch_thread.join(timeout=1.0)
 
     # Public API
-
-    async def send_text(self, text):
-        """Send text to XiaoZhi."""
-        if self.xiaozhi and self.xiaozhi.is_connected():
-            await self.xiaozhi.send_text(text)
 
     async def send_to_openclaw(self, text: str, wait_response: bool = False) -> str | None:
         """Send message to OpenClaw (for skill-based autonomous playback).
@@ -449,69 +377,3 @@ class MainApp:
             session_key: New session key (e.g. "agent:user123:my-app").
         """
         OpenClawManager.set_session_key(session_key)
-
-    async def send_to_openai(self, text: str, wait_response: bool = False) -> str | None:
-        """Send message to the OpenAI-compatible service."""
-        try:
-            full_text = text
-            if OpenAIManager._rule_prompt_for_skill:
-                full_text = text + "\n" + OpenAIManager._rule_prompt_for_skill
-            return await OpenAIManager.send(full_text, wait_response=wait_response)
-        except Exception as e:
-            logger.error(f"[MainApp] 发送消息到 OpenAI 兼容服务失败: {type(e).__name__}: {e}")
-            return None
-
-    async def send_to_openai_and_play_reply(
-        self,
-        text: str,
-        wait_response: bool = False,
-    ) -> str | None:
-        """Send message to the OpenAI-compatible service and play the reply."""
-        try:
-            full_text = text
-            if OpenAIManager._rule_prompt:
-                full_text = text + "\n" + OpenAIManager._rule_prompt
-            return await OpenAIManager.send_and_play_reply(
-                full_text,
-                wait_response=wait_response,
-            )
-        except Exception as e:
-            logger.error(f"[MainApp] 发送消息到 OpenAI 兼容服务失败: {type(e).__name__}: {e}")
-            return None
-
-    def set_openai_session_key(self, session_key: str):
-        """Override the OpenAI-compatible service session key at runtime."""
-        OpenAIManager.set_session_key(session_key)
-
-    async def send_to_qwenpaw(self, text: str, wait_response: bool = False) -> str | None:
-        """Send message to QwenPaw."""
-        try:
-            full_text = text
-            if QwenPawManager._rule_prompt_for_skill:
-                full_text = text + "\n" + QwenPawManager._rule_prompt_for_skill
-            return await QwenPawManager.send(full_text, wait_response=wait_response)
-        except Exception as e:
-            logger.error(f"[MainApp] 发送消息到 QwenPaw 失败: {type(e).__name__}: {e}")
-            return None
-
-    async def send_to_qwenpaw_and_play_reply(
-        self,
-        text: str,
-        wait_response: bool = False,
-    ) -> str | None:
-        """Send message to QwenPaw and play the reply."""
-        try:
-            full_text = text
-            if QwenPawManager._rule_prompt:
-                full_text = text + "\n" + QwenPawManager._rule_prompt
-            return await QwenPawManager.send_and_play_reply(
-                full_text,
-                wait_response=wait_response,
-            )
-        except Exception as e:
-            logger.error(f"[MainApp] 发送消息到 QwenPaw 失败: {type(e).__name__}: {e}")
-            return None
-
-    def set_qwenpaw_session_key(self, session_key: str):
-        """Override the QwenPaw session key at runtime."""
-        QwenPawManager.set_session_key(session_key)

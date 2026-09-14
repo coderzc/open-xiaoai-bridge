@@ -1,7 +1,7 @@
 # AGENTS.md
 
-> 小爱音箱与外部 AI 服务（小智 AI、OpenClaw）的桥接器。
-> 接管音箱音频输入输出，实现与第三方 AI 的对话。
+> 小爱音箱与外部 AI 服务（OpenClaw、Home Assistant）的桥接器。
+> 接管音箱音频输入输出，实现与第三方 AI / 智能家居的对话。
 
 ## 系统架构
 
@@ -12,15 +12,17 @@
 ```
 open-xiaoai-bridge/
 ├── main.py                        # 入口：解析环境变量，启动 MainApp
-├── config.py                      # 用户配置（唤醒词、路由钩子、TTS、OpenClaw 等）
+├── config.py                      # 用户配置（唤醒词、路由钩子、TTS、OpenClaw/HomeAssistant 等）
 ├── core/
 │   ├── app.py                     # MainApp 主控制器（单例，管理生命周期）
 │   ├── xiaoai.py                  # XiaoAI 设备接入 / 事件桥接
 │   ├── xiaoai_conversation.py     # 小爱连续对话策略
-│   ├── xiaozhi.py                 # 小智 AI WebSocket 协议客户端
 │   ├── openclaw.py                # OpenClaw 网关客户端（连接、消息、TTS 播放）
-│   ├── openclaw_conversation.py   # OpenClaw 连续对话循环（VAD → ASR → Agent → TTS）
-│   ├── wakeup_session.py          # 小智唤醒会话状态机
+│   ├── openclaw_conversation.py   # OpenClaw 连续对话控制器
+│   ├── homeassistant.py           # HomeAssistantManager（Conversation API 客户端）
+│   ├── homeassistant_conversation.py  # Home Assistant 连续对话控制器
+│   ├── external_conversation.py   # OpenClaw/HomeAssistant 共用的对话循环基类
+│   ├── wakeup_session.py          # 唤醒会话路由（KWS/小爱 → OpenClaw/HomeAssistant）
 │   ├── ref.py                     # 全局引用注册表（get/set 依赖注入）
 │   ├── models/                    # 模型文件（KWS/VAD/ASR，.gitignore 排除）
 │   ├── assets/sounds/             # 音效（tts_notify.mp3 等）
@@ -29,16 +31,15 @@ open-xiaoai-bridge/
 │   │   ├── api_server.py          # HTTP REST API（aiohttp）
 │   │   ├── audio/
 │   │   │   ├── stream.py          # GlobalStream 全局音频流（多路输入广播）
-│   │   │   ├── codec.py           # 音频编解码
 │   │   │   ├── vad/silero.py      # Silero VAD 语音活动检测（ONNX）
 │   │   │   ├── kws/sherpa.py      # Sherpa KWS 关键词唤醒
+│   │   │   ├── kws/keywords.py    # 唤醒词文件生成（OPENCLAW_ENABLE / homeassistant.enabled 门控）
 │   │   │   └── asr/sherpa.py      # Sherpa ASR 离线语音识别（SenseVoice）
 │   │   ├── tts/doubao.py          # 豆包 TTS 客户端（火山引擎）
 │   │   └── protocols/
-│   │       ├── websocket_protocol.py  # 小智 WebSocket 协议实现
-│   │       └── typing.py              # 协议类型定义
+│   │       └── typing.py          # 设备状态 / 事件类型定义
 │   └── utils/
-│       ├── logger.py              # 彩色日志（XiaozhiLogger 单例）
+│       ├── logger.py              # 彩色日志单例（类名 XiaozhiLogger 为历史命名，功能与 XiaoZhi 后端无关）
 │       ├── config.py              # ConfigManager（嵌套路径查询、热重载）
 │       ├── config_loader.py       # config.py 动态导入
 │       ├── base.py                # 基础工具
@@ -55,18 +56,21 @@ open-xiaoai-bridge/
 └── tests/                         # 测试脚本
 ```
 
+> 本项目当前只保留 **OpenClaw** 与 **Home Assistant** 两条外部对话链路。
+> 早期支持过的 XiaoZhi / OpenAI 兼容服务 / QwenPaw 后端已整体移除
+> （历史实现可在 git 历史中找到，不再维护）。
+
 ## 核心组件
 
 ### MainApp (core/app.py)
 
 应用主控制器，单例模式，管理全部服务生命周期。
 
-- `instance(enable_xiaozhi, enable_openclaw)` → 单例获取
+- `instance(enable_openclaw)` → 单例获取（Home Assistant 无独立开关，见下方说明）
 - `run(enable_api_server)` → 启动各服务
-- `set_device_state(state)` → 管理设备状态（IDLE / LISTENING / SPEAKING / CONNECTING）
-- `send_text(text)` → 发送文本到小智
 - `send_to_openclaw(text, wait_response)` → 发送消息到 OpenClaw（返回 run_id 或回复文本）
 - `send_to_openclaw_and_play_reply(text, wait_response)` → 发送并 TTS 播放回复
+- `set_openclaw_session_key(session_key)` → 运行时切换 OpenClaw session
 - `schedule(callback)` → 主线程任务队列
 - `shutdown()` → 优雅关闭
 
@@ -74,6 +78,11 @@ open-xiaoai-bridge/
 - `MainApp` 是业务主循环和设备状态的单一入口
 - `device_state` 以 `MainApp` 为准，其他模块通过代理回写，不各自维护平行状态
 - `MainApp.loop` 是业务协程的主调度循环
+- **Home Assistant 没有 `enable_homeassistant` 参数**：它完全由 `config.py` 的
+  `homeassistant.enabled` 驱动。任何"是否启动 VAD/KWS 音频"、"是否预热本地
+  ASR"之类的判断，都必须显式读取 `homeassistant.enabled`，不能只看
+  `enable_openclaw` ——历史上这里漏过，导致"只开 Home Assistant"时音频服务
+  永远不会启动（已在 `core/app.py` / `keywords.py` / `scripts/start.sh` 修复）。
 
 ### XiaoAI (core/xiaoai.py)
 
@@ -90,27 +99,14 @@ open-xiaoai-bridge/
 - 连续对话状态放在 `xiaoai_conversation.py`
 - `async_loop` 不应承载新的业务状态机
 
-### XiaoZhi (core/xiaozhi.py)
-
-小智 AI WebSocket 协议客户端，单例模式。
-
-- `connect()` / `disconnect()` → 连接管理
-- `send_audio(frames)` / `send_text(text)` → 发送音频 / 文本
-- `send_start_listening(mode)` / `send_abort_speaking(reason)` → 协议命令
-- 回调委托：`on_incoming_audio`, `on_incoming_json`, `on_network_error` 等
-
-**边界约束**:
-- 只负责协议收发，不负责唤醒策略和连续对话策略
-- `session_id` 必须由服务端消息更新，不能长期使用空值发送控制消息
-
 ### OpenClawManager (core/openclaw.py)
 
 OpenClaw 网关客户端，管理 WebSocket 连接、消息分发、自动重连、TTS 播放。
 
-- `initialize_from_config(enabled)` → 从 config 初始化
+- `initialize_from_config()` → 从 config 初始化
 - `connect()` → 建立连接（Ed25519 设备身份认证）
 - `send(text, wait_response)` → 发送消息，返回 run_id 或回复文本，失败返回 None
-- `send_and_play(text, wait_response)` → 发送并 TTS 播放回复
+- `send_and_play_reply(text, wait_response)` → 发送并 TTS 播放回复
 - `is_connected()` / `is_enabled()` → 状态查询
 
 **内部机制**:
@@ -126,57 +122,70 @@ OpenClaw 网关客户端，管理 WebSocket 连接、消息分发、自动重连
 - `client.mode`: 必须是预定义常量
 - `session_key`: 只从 config.py 读取
 
-### OpenClawConversationController (core/openclaw_conversation.py)
+### HomeAssistantManager (core/homeassistant.py)
 
-OpenClaw 连续对话控制器。唤醒词触发后进入独立的 VAD → ASR → OpenClaw → TTS 循环。
+Home Assistant Conversation API 客户端，负责与 HA 的
+`/api/conversation/process` 交互。
 
-- `start()` → 进入对话模式
-- `stop()` → 退出对话
-- `is_active()` → 状态查询
+- `send(text, ...)` → 提交一句话给 HA Agent，返回解析后的回复文本
+- `reset_conversation()` → 清空本地维护的 `conversation_id`（用于会话重置）
+- `start_session()` / `end_session()` → 可选的自定义状态实体维护（`homeassistant.state.enabled`）
+- `update_state(...)` → 按配置回写 HA 的状态实体属性（会话轮次、最近一句话等）
 
-**对话循环** (`_run_one_turn`):
-1. VAD 检测语音开始（`_wait_for_speech`）
-2. 录制完整语音（VAD 帧 hook）
-3. SherpaASR 离线识别
-4. 退出关键词检测
-5. 发送到 OpenClaw
-6. TTS 播放回复（阻塞等待完成）
-7. 恢复监听
+**关键坑点**:
+- HA 响应中的 `continue_conversation` 字段语义是"HA 自己是否需要追问一句"
+  （例如设置计时器缺少时长），**不代表**"是否应保持这次唤醒的连续对话打开"。
+  不能直接拿它当作多轮对话循环的退出条件——大多数已执行完的普通指令都会
+  返回 `false`。是否连续对话由独立的 `homeassistant.continuous_conversation`
+  配置开关控制，见 `homeassistant_conversation.py`。
 
-**回声防护机制**:
-- `stop_recording` → kill 远端 arecord → 麦克风物理静音
-- TTS 和提示音都在关麦期间播放，开麦后 VAD 从干净状态开始检测
-- `VAD.resume()` 会自动 `_reset_state()` + `input_bytes.clear()`，清除旧的 `speech_frames` 和音频流缓冲
+### HomeAssistantConversationController (core/homeassistant_conversation.py)
 
-**VAD 状态泄漏陷阱**:
-- VAD 检测循环持续运行，`speech_frames` 会不断积累音频帧
-- 如果 `resume()` 不调用 `_reset_state()`，旧帧（唤醒词回声、TTS 回声）会泄漏到下一轮检测，导致 ASR 识别出幽灵音频
-- `pause()` 会调 `_reset_state()`，但 `resume()` 必须也调——两者都需要清理状态
+Home Assistant 连续对话控制器，继承 `ExternalConversationController`。
+
+- `start()` → 进入对话模式（播放 `intro_prompt`，进入对话循环）
+- `stop()` / `is_active()` → 继承自基类
+- `_run_one_turn_with_xiaoai_asr()` → 覆盖基类实现，接管小爱原生 ASR 结果，
+  一轮对话结束后根据 `continuous_conversation` 开关和 HA 的
+  `continue_conversation` 决定是继续监听还是退出
+- `_play_tts(text)` → 覆盖基类的豆包/OpenClaw TTS 逻辑，固定使用小爱原生 TTS
 
 **边界约束**:
-- 使用独立 VAD Future，不与 WakeupSessionManager 冲突
-- TTS 完全阻塞，播放完成后才继续监听
-- 自己持有并管理当前 TTS 的 `playback_token`；停止 OpenClaw 对话时应调用 `stop_tts_playback(token)`，不要在外层直接无 token 全局停止 Rust TTS
+- 当前只验证过 `input_mode: xiaoai_asr`；`local_asr` 路径依赖
+  `HomeAssistantManager` 未实现的 `_send_and_track`/`_wait_response`，走到会报错
+
+### ExternalConversationController (core/external_conversation.py)
+
+OpenClaw 与 Home Assistant 共用的连续对话循环基类。
+
+- `_conversation_loop()` → `while self.active` 主循环，逐轮调用
+  `_run_one_turn_with_local_asr()` 或 `_run_one_turn_with_xiaoai_asr()`
+  （取决于 `input_mode`），直到某一轮返回 `"exit"`
+- `_wait_for_speech(vad)` / `_wait_for_silence(vad)` → 本地 VAD 语音检测
+- `consume_xiaoai_recognize_result(...)` → 供 `WakeupSessionManager` 转发小爱原生 ASR 结果
+- `_play_tts(text)` → 默认实现（子类可覆盖，如 HomeAssistant 固定用小爱原生 TTS）
+- `_stop_recording()` / `_start_recording()` → TTS 播放期间关闭麦克风防回声，播放结束恢复
 
 ### WakeupSessionManager (core/wakeup_session.py)
 
-小智唤醒会话状态机，协调 KWS → VAD → 小智/OpenClaw 的唤醒流程。
+唤醒会话路由，协调 KWS/小爱原生唤醒 → OpenClaw/HomeAssistant 的分发。
 
-- `wakeup(text, source)` → 处理唤醒（调用 `before_wakeup` 钩子，路由到 XiaoZhi 或 OpenClaw）
-- `wait_next_step(timeout)` → 异步等待状态变化（带待决状态缓冲）
-- `update_step(step, step_data)` → 更新步骤
-- 事件回调：`on_interrupt()`, `on_wakeup()`, `on_tts_start()`, `on_tts_end()`, `on_speech()`, `on_silence()`
-- `on_interrupt()` → 小爱唤醒时：cancel OpenClaw task、停止设备音频播放、恢复录音通道、stop XiaoAI conversation
+- `wakeup(text, source)` → 处理唤醒（调用 `before_wakeup` 钩子，路由到
+  OpenClaw 或 Home Assistant）
+- `consume_xiaoai_asr_result(...)` → 把小爱原生 ASR 结果转发给当前激活的
+  外部对话控制器（Home Assistant 优先，OpenClaw 其次）
+- `on_interrupt()` → 小爱唤醒时：cancel OpenClaw/HomeAssistant task、停止设备
+  音频播放、恢复录音通道、stop XiaoAI conversation
+- `reset_all_sessions()` → 停止所有活跃会话并重置
 
 **路由规则**（`before_wakeup` 返回值）:
-- `"xiaozhi"` → 走小智流程
 - `"openclaw"` → 走 OpenClaw 连续对话
+- `"homeassistant"` → 走 Home Assistant 连续对话
 - `None` → 不处理（用户自行处理）
 
 **边界约束**:
-- 它是"小智唤醒会话状态机"，不是通用事件总线
 - 只允许缓存 `on_speech` / `on_silence` 等外部探测信号
-- 不要缓存 `on_wakeup` / `on_interrupt` 等控制步骤
+- 不要缓存唤醒/中断等控制步骤
 
 ### XiaoAIConversationController (core/xiaoai_conversation.py)
 
@@ -188,9 +197,8 @@ OpenClaw 连续对话控制器。唤醒词触发后进入独立的 VAD → ASR �
 - `handle_playing_status(playing_status, speaker)` → TTS 完成后重新唤醒
 
 **边界约束**:
-- 小爱连续对话和小智唤醒 / 会话超时是两套独立机制
+- 小爱自身的连续对话和外部唤醒 / 会话超时是两套独立机制
 - 只有在"小爱连续对话确实激活"时才允许停止
-- 小智超时退出时不应打印"小爱停止连续对话"日志
 
 ### SpeakerManager (core/services/speaker.py)
 
@@ -204,7 +212,7 @@ OpenClaw 连续对话控制器。唤醒词触发后进入独立的 VAD → ASR �
 - `run_shell(command, timeout)` → RPC shell
 
 **边界约束**:
-- `stop_device_audio()` 只负责"停播放"，不负责恢复录音；`start_recording()` 属于会话层恢复逻辑，应由 `WakeupSessionManager` / `OpenClawConversationController` 等上层按场景决定
+- `stop_device_audio()` 只负责"停播放"，不负责恢复录音；`start_recording()` 属于会话层恢复逻辑，应由 `WakeupSessionManager` / `ExternalConversationController` 等上层按场景决定
 
 ### APIServer (core/services/api_server.py)
 
@@ -252,26 +260,30 @@ uv run main.py
 - 不启动 KWS/VAD 初始化
 - `core/services/audio/kws/keywords.py` 在此模式下应直接退出成功
 
-### 模式 2: 小智 AI
-```bash
-XIAOZHI_ENABLE=1 uv run main.py
-```
-- 启动 VAD + KWS，唤醒后连接小智 AI
-- KWS 初始化失败应视为启动失败
-
-### 模式 3: OpenClaw
+### 模式 2: OpenClaw
 ```bash
 OPENCLAW_ENABLE=1 uv run main.py
 ```
 - 小爱指令拦截 → 转发到 OpenClaw → TTS 播放结果
-
-### 模式 4: 小智 + OpenClaw（混合）
-```bash
-XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 uv run main.py
-```
-- config.py `before_wakeup` 按唤醒词路由到小智或 OpenClaw 连续对话
-- OpenClaw 连续对话：VAD → ASR → OpenClaw → TTS 循环
+- OpenClaw 连续对话：VAD/小爱 ASR → OpenClaw → TTS 循环
 - 退出关键词：config `openclaw.exit_keywords`
+
+### 模式 3: Home Assistant
+```bash
+# 没有独立环境变量，改在 config.py 中设置：
+# APP_CONFIG["homeassistant"]["enabled"] = True
+uv run main.py
+```
+- 小爱/KWS 唤醒 → 转发到 HA Conversation API → 小爱原生 TTS 播放结果
+- 是否连续对话：config `homeassistant.continuous_conversation`
+- 退出关键词：config `homeassistant.exit_keywords`
+
+### 模式 4: OpenClaw + Home Assistant（混合）
+```bash
+OPENCLAW_ENABLE=1 uv run main.py
+# 同时在 config.py 中设置 homeassistant.enabled = True
+```
+- config.py `before_wakeup` 按唤醒词路由到 OpenClaw 或 Home Assistant 连续对话
 
 ### 启用 API Server
 ```bash
@@ -299,14 +311,16 @@ API_SERVER_ENABLE=1 uv run main.py
 - 唯一允许的裸输出：启动 ASCII banner
 
 ### 全局引用 (ref.py)
-- `set_app/get_app`, `set_xiaozhi/get_xiaozhi`, `set_xiaoai/get_xiaoai`
+- `set_app/get_app`, `set_xiaoai/get_xiaoai`
 - `set_vad/get_vad`, `set_kws/get_kws`, `set_speaker/get_speaker`
-- `set_audio_codec/get_audio_codec`, `set_speech_frames/get_speech_frames`
 
 ### 兼容约束
 - `CLI` 环境变量不再作为功能开关，不要引入依赖 `CLI` 的运行时分支
-- `XIAOZHI_ENABLE=0` 时必须允许跳过 KWS 初始化
+- `OPENCLAW_ENABLE=0` 且 `homeassistant.enabled=False` 时必须允许跳过 KWS 初始化
 - `scripts/start.sh` 在仅小爱模式下不应检查 `core/models/` 下的模型文件
+- Home Assistant 相关的功能开关一律读 `config.py` 的
+  `homeassistant.*`，不要为它引入新的环境变量（保持与 OpenClaw 不对称是
+  故意的设计，不是遗漏）
 
 ## 测试
 
@@ -319,6 +333,9 @@ python3 tests/test_tts_latency.py --formats mp3,pcm --rounds 3 --repeat 8
 
 # OpenClaw 连通性测试
 python3 tests/test_openclaw_live_connectivity.py
+
+# 唤醒词生成门禁 + KWS 路由单测（无需硬件/网络）
+python3 -m pytest tests/test_wakeup_keywords.py -v
 ```
 
 ## 音箱设备控制命令
@@ -356,13 +373,13 @@ python3 tests/test_openclaw_live_connectivity.py
 | 停止录音 | `open_xiaoai_server.stop_recording()` | 杀掉设备端 `arecord` 进程，麦克风静音 |
 | 恢复录音 | `open_xiaoai_server.start_recording()` | 重启 `arecord`，音频数据恢复流入 `GlobalStream` |
 
-**注意**：OpenClaw 对话中 TTS 播放时会 `stop_recording` 防止回声。如果在此期间触发中断（"小爱同学"），必须在中断处理中调用 `start_recording` 恢复录音，否则 KWS 将因无音频数据而永久失效。
+**注意**：OpenClaw / Home Assistant 对话中 TTS 播放时会 `stop_recording` 防止回声。如果在此期间触发中断（"小爱同学"），必须在中断处理中调用 `start_recording` 恢复录音，否则 KWS 将因无音频数据而永久失效。
 
 ### on_interrupt 中断处理要点
 
 `on_interrupt()` 触发时（用户喊"小爱同学"），需要完成以下步骤：
-1. Cancel OpenClaw asyncio task
-2. 让 OpenClaw controller 自己停止当前 TTS（使用自己持有的 `playback_token`）
+1. Cancel OpenClaw / Home Assistant asyncio task
+2. 让对应的 conversation controller 自己停止当前 TTS（使用自己持有的 `playback_token`）
 3. `SpeakerManager.stop_device_audio()` — 停止阻塞 TTS / 非阻塞 TTS / PCM，并重置 PCM 通道
 4. `start_recording` — 恢复录音（KWS 依赖此通道）
 5. `XiaoAI.stop_conversation()` — 停止连续对话

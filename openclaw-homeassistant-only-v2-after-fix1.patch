@@ -1,0 +1,5356 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 4609c9a..dfee321 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,7 +1,7 @@
+ # AGENTS.md
+ 
+-> 小爱音箱与外部 AI 服务（小智 AI、OpenClaw）的桥接器。
+-> 接管音箱音频输入输出，实现与第三方 AI 的对话。
++> 小爱音箱与外部 AI 服务（OpenClaw、Home Assistant）的桥接器。
++> 接管音箱音频输入输出，实现与第三方 AI / 智能家居的对话。
+ 
+ ## 系统架构
+ 
+@@ -12,15 +12,17 @@
+ ```
+ open-xiaoai-bridge/
+ ├── main.py                        # 入口：解析环境变量，启动 MainApp
+-├── config.py                      # 用户配置（唤醒词、路由钩子、TTS、OpenClaw 等）
++├── config.py                      # 用户配置（唤醒词、路由钩子、TTS、OpenClaw/HomeAssistant 等）
+ ├── core/
+ │   ├── app.py                     # MainApp 主控制器（单例，管理生命周期）
+ │   ├── xiaoai.py                  # XiaoAI 设备接入 / 事件桥接
+ │   ├── xiaoai_conversation.py     # 小爱连续对话策略
+-│   ├── xiaozhi.py                 # 小智 AI WebSocket 协议客户端
+ │   ├── openclaw.py                # OpenClaw 网关客户端（连接、消息、TTS 播放）
+-│   ├── openclaw_conversation.py   # OpenClaw 连续对话循环（VAD → ASR → Agent → TTS）
+-│   ├── wakeup_session.py          # 小智唤醒会话状态机
++│   ├── openclaw_conversation.py   # OpenClaw 连续对话控制器
++│   ├── homeassistant.py           # HomeAssistantManager（Conversation API 客户端）
++│   ├── homeassistant_conversation.py  # Home Assistant 连续对话控制器
++│   ├── external_conversation.py   # OpenClaw/HomeAssistant 共用的对话循环基类
++│   ├── wakeup_session.py          # 唤醒会话路由（KWS/小爱 → OpenClaw/HomeAssistant）
+ │   ├── ref.py                     # 全局引用注册表（get/set 依赖注入）
+ │   ├── models/                    # 模型文件（KWS/VAD/ASR，.gitignore 排除）
+ │   ├── assets/sounds/             # 音效（tts_notify.mp3 等）
+@@ -29,16 +31,15 @@ open-xiaoai-bridge/
+ │   │   ├── api_server.py          # HTTP REST API（aiohttp）
+ │   │   ├── audio/
+ │   │   │   ├── stream.py          # GlobalStream 全局音频流（多路输入广播）
+-│   │   │   ├── codec.py           # 音频编解码
+ │   │   │   ├── vad/silero.py      # Silero VAD 语音活动检测（ONNX）
+ │   │   │   ├── kws/sherpa.py      # Sherpa KWS 关键词唤醒
++│   │   │   ├── kws/keywords.py    # 唤醒词文件生成（OPENCLAW_ENABLE / homeassistant.enabled 门控）
+ │   │   │   └── asr/sherpa.py      # Sherpa ASR 离线语音识别（SenseVoice）
+ │   │   ├── tts/doubao.py          # 豆包 TTS 客户端（火山引擎）
+ │   │   └── protocols/
+-│   │       ├── websocket_protocol.py  # 小智 WebSocket 协议实现
+-│   │       └── typing.py              # 协议类型定义
++│   │       └── typing.py          # 设备状态 / 事件类型定义
+ │   └── utils/
+-│       ├── logger.py              # 彩色日志（XiaozhiLogger 单例）
++│       ├── logger.py              # 彩色日志单例（类名 XiaozhiLogger 为历史命名，功能与 XiaoZhi 后端无关）
+ │       ├── config.py              # ConfigManager（嵌套路径查询、热重载）
+ │       ├── config_loader.py       # config.py 动态导入
+ │       ├── base.py                # 基础工具
+@@ -55,18 +56,21 @@ open-xiaoai-bridge/
+ └── tests/                         # 测试脚本
+ ```
+ 
++> 本项目当前只保留 **OpenClaw** 与 **Home Assistant** 两条外部对话链路。
++> 早期支持过的 XiaoZhi / OpenAI 兼容服务 / QwenPaw 后端已整体移除
++> （历史实现可在 git 历史中找到，不再维护）。
++
+ ## 核心组件
+ 
+ ### MainApp (core/app.py)
+ 
+ 应用主控制器，单例模式，管理全部服务生命周期。
+ 
+-- `instance(enable_xiaozhi, enable_openclaw)` → 单例获取
++- `instance(enable_openclaw)` → 单例获取（Home Assistant 无独立开关，见下方说明）
+ - `run(enable_api_server)` → 启动各服务
+-- `set_device_state(state)` → 管理设备状态（IDLE / LISTENING / SPEAKING / CONNECTING）
+-- `send_text(text)` → 发送文本到小智
+ - `send_to_openclaw(text, wait_response)` → 发送消息到 OpenClaw（返回 run_id 或回复文本）
+ - `send_to_openclaw_and_play_reply(text, wait_response)` → 发送并 TTS 播放回复
++- `set_openclaw_session_key(session_key)` → 运行时切换 OpenClaw session
+ - `schedule(callback)` → 主线程任务队列
+ - `shutdown()` → 优雅关闭
+ 
+@@ -74,6 +78,11 @@ open-xiaoai-bridge/
+ - `MainApp` 是业务主循环和设备状态的单一入口
+ - `device_state` 以 `MainApp` 为准，其他模块通过代理回写，不各自维护平行状态
+ - `MainApp.loop` 是业务协程的主调度循环
++- **Home Assistant 没有 `enable_homeassistant` 参数**：它完全由 `config.py` 的
++  `homeassistant.enabled` 驱动。任何"是否启动 VAD/KWS 音频"、"是否预热本地
++  ASR"之类的判断，都必须显式读取 `homeassistant.enabled`，不能只看
++  `enable_openclaw` ——历史上这里漏过，导致"只开 Home Assistant"时音频服务
++  永远不会启动（已在 `core/app.py` / `keywords.py` / `scripts/start.sh` 修复）。
+ 
+ ### XiaoAI (core/xiaoai.py)
+ 
+@@ -90,27 +99,14 @@ open-xiaoai-bridge/
+ - 连续对话状态放在 `xiaoai_conversation.py`
+ - `async_loop` 不应承载新的业务状态机
+ 
+-### XiaoZhi (core/xiaozhi.py)
+-
+-小智 AI WebSocket 协议客户端，单例模式。
+-
+-- `connect()` / `disconnect()` → 连接管理
+-- `send_audio(frames)` / `send_text(text)` → 发送音频 / 文本
+-- `send_start_listening(mode)` / `send_abort_speaking(reason)` → 协议命令
+-- 回调委托：`on_incoming_audio`, `on_incoming_json`, `on_network_error` 等
+-
+-**边界约束**:
+-- 只负责协议收发，不负责唤醒策略和连续对话策略
+-- `session_id` 必须由服务端消息更新，不能长期使用空值发送控制消息
+-
+ ### OpenClawManager (core/openclaw.py)
+ 
+ OpenClaw 网关客户端，管理 WebSocket 连接、消息分发、自动重连、TTS 播放。
+ 
+-- `initialize_from_config(enabled)` → 从 config 初始化
++- `initialize_from_config()` → 从 config 初始化
+ - `connect()` → 建立连接（Ed25519 设备身份认证）
+ - `send(text, wait_response)` → 发送消息，返回 run_id 或回复文本，失败返回 None
+-- `send_and_play(text, wait_response)` → 发送并 TTS 播放回复
++- `send_and_play_reply(text, wait_response)` → 发送并 TTS 播放回复
+ - `is_connected()` / `is_enabled()` → 状态查询
+ 
+ **内部机制**:
+@@ -126,57 +122,70 @@ OpenClaw 网关客户端，管理 WebSocket 连接、消息分发、自动重连
+ - `client.mode`: 必须是预定义常量
+ - `session_key`: 只从 config.py 读取
+ 
+-### OpenClawConversationController (core/openclaw_conversation.py)
++### HomeAssistantManager (core/homeassistant.py)
++
++Home Assistant Conversation API 客户端，负责与 HA 的
++`/api/conversation/process` 交互。
+ 
+-OpenClaw 连续对话控制器。唤醒词触发后进入独立的 VAD → ASR → OpenClaw → TTS 循环。
++- `send(text, ...)` → 提交一句话给 HA Agent，返回解析后的回复文本
++- `reset_conversation()` → 清空本地维护的 `conversation_id`（用于会话重置）
++- `start_session()` / `end_session()` → 可选的自定义状态实体维护（`homeassistant.state.enabled`）
++- `update_state(...)` → 按配置回写 HA 的状态实体属性（会话轮次、最近一句话等）
+ 
+-- `start()` → 进入对话模式
+-- `stop()` → 退出对话
+-- `is_active()` → 状态查询
++**关键坑点**:
++- HA 响应中的 `continue_conversation` 字段语义是"HA 自己是否需要追问一句"
++  （例如设置计时器缺少时长），**不代表**"是否应保持这次唤醒的连续对话打开"。
++  不能直接拿它当作多轮对话循环的退出条件——大多数已执行完的普通指令都会
++  返回 `false`。是否连续对话由独立的 `homeassistant.continuous_conversation`
++  配置开关控制，见 `homeassistant_conversation.py`。
+ 
+-**对话循环** (`_run_one_turn`):
+-1. VAD 检测语音开始（`_wait_for_speech`）
+-2. 录制完整语音（VAD 帧 hook）
+-3. SherpaASR 离线识别
+-4. 退出关键词检测
+-5. 发送到 OpenClaw
+-6. TTS 播放回复（阻塞等待完成）
+-7. 恢复监听
++### HomeAssistantConversationController (core/homeassistant_conversation.py)
+ 
+-**回声防护机制**:
+-- `stop_recording` → kill 远端 arecord → 麦克风物理静音
+-- TTS 和提示音都在关麦期间播放，开麦后 VAD 从干净状态开始检测
+-- `VAD.resume()` 会自动 `_reset_state()` + `input_bytes.clear()`，清除旧的 `speech_frames` 和音频流缓冲
++Home Assistant 连续对话控制器，继承 `ExternalConversationController`。
+ 
+-**VAD 状态泄漏陷阱**:
+-- VAD 检测循环持续运行，`speech_frames` 会不断积累音频帧
+-- 如果 `resume()` 不调用 `_reset_state()`，旧帧（唤醒词回声、TTS 回声）会泄漏到下一轮检测，导致 ASR 识别出幽灵音频
+-- `pause()` 会调 `_reset_state()`，但 `resume()` 必须也调——两者都需要清理状态
++- `start()` → 进入对话模式（播放 `intro_prompt`，进入对话循环）
++- `stop()` / `is_active()` → 继承自基类
++- `_run_one_turn_with_xiaoai_asr()` → 覆盖基类实现，接管小爱原生 ASR 结果，
++  一轮对话结束后根据 `continuous_conversation` 开关和 HA 的
++  `continue_conversation` 决定是继续监听还是退出
++- `_play_tts(text)` → 覆盖基类的豆包/OpenClaw TTS 逻辑，固定使用小爱原生 TTS
+ 
+ **边界约束**:
+-- 使用独立 VAD Future，不与 WakeupSessionManager 冲突
+-- TTS 完全阻塞，播放完成后才继续监听
+-- 自己持有并管理当前 TTS 的 `playback_token`；停止 OpenClaw 对话时应调用 `stop_tts_playback(token)`，不要在外层直接无 token 全局停止 Rust TTS
++- 当前只验证过 `input_mode: xiaoai_asr`；`local_asr` 路径依赖
++  `HomeAssistantManager` 未实现的 `_send_and_track`/`_wait_response`，走到会报错
++
++### ExternalConversationController (core/external_conversation.py)
++
++OpenClaw 与 Home Assistant 共用的连续对话循环基类。
++
++- `_conversation_loop()` → `while self.active` 主循环，逐轮调用
++  `_run_one_turn_with_local_asr()` 或 `_run_one_turn_with_xiaoai_asr()`
++  （取决于 `input_mode`），直到某一轮返回 `"exit"`
++- `_wait_for_speech(vad)` / `_wait_for_silence(vad)` → 本地 VAD 语音检测
++- `consume_xiaoai_recognize_result(...)` → 供 `WakeupSessionManager` 转发小爱原生 ASR 结果
++- `_play_tts(text)` → 默认实现（子类可覆盖，如 HomeAssistant 固定用小爱原生 TTS）
++- `_stop_recording()` / `_start_recording()` → TTS 播放期间关闭麦克风防回声，播放结束恢复
+ 
+ ### WakeupSessionManager (core/wakeup_session.py)
+ 
+-小智唤醒会话状态机，协调 KWS → VAD → 小智/OpenClaw 的唤醒流程。
++唤醒会话路由，协调 KWS/小爱原生唤醒 → OpenClaw/HomeAssistant 的分发。
+ 
+-- `wakeup(text, source)` → 处理唤醒（调用 `before_wakeup` 钩子，路由到 XiaoZhi 或 OpenClaw）
+-- `wait_next_step(timeout)` → 异步等待状态变化（带待决状态缓冲）
+-- `update_step(step, step_data)` → 更新步骤
+-- 事件回调：`on_interrupt()`, `on_wakeup()`, `on_tts_start()`, `on_tts_end()`, `on_speech()`, `on_silence()`
+-- `on_interrupt()` → 小爱唤醒时：cancel OpenClaw task、停止设备音频播放、恢复录音通道、stop XiaoAI conversation
++- `wakeup(text, source)` → 处理唤醒（调用 `before_wakeup` 钩子，路由到
++  OpenClaw 或 Home Assistant）
++- `consume_xiaoai_asr_result(...)` → 把小爱原生 ASR 结果转发给当前激活的
++  外部对话控制器（Home Assistant 优先，OpenClaw 其次）
++- `on_interrupt()` → 小爱唤醒时：cancel OpenClaw/HomeAssistant task、停止设备
++  音频播放、恢复录音通道、stop XiaoAI conversation
++- `reset_all_sessions()` → 停止所有活跃会话并重置
+ 
+ **路由规则**（`before_wakeup` 返回值）:
+-- `"xiaozhi"` → 走小智流程
+ - `"openclaw"` → 走 OpenClaw 连续对话
++- `"homeassistant"` → 走 Home Assistant 连续对话
+ - `None` → 不处理（用户自行处理）
+ 
+ **边界约束**:
+-- 它是"小智唤醒会话状态机"，不是通用事件总线
+ - 只允许缓存 `on_speech` / `on_silence` 等外部探测信号
+-- 不要缓存 `on_wakeup` / `on_interrupt` 等控制步骤
++- 不要缓存唤醒/中断等控制步骤
+ 
+ ### XiaoAIConversationController (core/xiaoai_conversation.py)
+ 
+@@ -188,9 +197,8 @@ OpenClaw 连续对话控制器。唤醒词触发后进入独立的 VAD → ASR 
+ - `handle_playing_status(playing_status, speaker)` → TTS 完成后重新唤醒
+ 
+ **边界约束**:
+-- 小爱连续对话和小智唤醒 / 会话超时是两套独立机制
++- 小爱自身的连续对话和外部唤醒 / 会话超时是两套独立机制
+ - 只有在"小爱连续对话确实激活"时才允许停止
+-- 小智超时退出时不应打印"小爱停止连续对话"日志
+ 
+ ### SpeakerManager (core/services/speaker.py)
+ 
+@@ -204,7 +212,7 @@ OpenClaw 连续对话控制器。唤醒词触发后进入独立的 VAD → ASR 
+ - `run_shell(command, timeout)` → RPC shell
+ 
+ **边界约束**:
+-- `stop_device_audio()` 只负责"停播放"，不负责恢复录音；`start_recording()` 属于会话层恢复逻辑，应由 `WakeupSessionManager` / `OpenClawConversationController` 等上层按场景决定
++- `stop_device_audio()` 只负责"停播放"，不负责恢复录音；`start_recording()` 属于会话层恢复逻辑，应由 `WakeupSessionManager` / `ExternalConversationController` 等上层按场景决定
+ 
+ ### APIServer (core/services/api_server.py)
+ 
+@@ -252,26 +260,30 @@ uv run main.py
+ - 不启动 KWS/VAD 初始化
+ - `core/services/audio/kws/keywords.py` 在此模式下应直接退出成功
+ 
+-### 模式 2: 小智 AI
++### 模式 2: OpenClaw
+ ```bash
+-XIAOZHI_ENABLE=1 uv run main.py
++OPENCLAW_ENABLE=1 uv run main.py
+ ```
+-- 启动 VAD + KWS，唤醒后连接小智 AI
+-- KWS 初始化失败应视为启动失败
++- 小爱指令拦截 → 转发到 OpenClaw → TTS 播放结果
++- OpenClaw 连续对话：VAD/小爱 ASR → OpenClaw → TTS 循环
++- 退出关键词：config `openclaw.exit_keywords`
+ 
+-### 模式 3: OpenClaw
++### 模式 3: Home Assistant
+ ```bash
+-OPENCLAW_ENABLE=1 uv run main.py
++# 没有独立环境变量，改在 config.py 中设置：
++# APP_CONFIG["homeassistant"]["enabled"] = True
++uv run main.py
+ ```
+-- 小爱指令拦截 → 转发到 OpenClaw → TTS 播放结果
++- 小爱/KWS 唤醒 → 转发到 HA Conversation API → 小爱原生 TTS 播放结果
++- 是否连续对话：config `homeassistant.continuous_conversation`
++- 退出关键词：config `homeassistant.exit_keywords`
+ 
+-### 模式 4: 小智 + OpenClaw（混合）
++### 模式 4: OpenClaw + Home Assistant（混合）
+ ```bash
+-XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 uv run main.py
++OPENCLAW_ENABLE=1 uv run main.py
++# 同时在 config.py 中设置 homeassistant.enabled = True
+ ```
+-- config.py `before_wakeup` 按唤醒词路由到小智或 OpenClaw 连续对话
+-- OpenClaw 连续对话：VAD → ASR → OpenClaw → TTS 循环
+-- 退出关键词：config `openclaw.exit_keywords`
++- config.py `before_wakeup` 按唤醒词路由到 OpenClaw 或 Home Assistant 连续对话
+ 
+ ### 启用 API Server
+ ```bash
+@@ -299,14 +311,16 @@ API_SERVER_ENABLE=1 uv run main.py
+ - 唯一允许的裸输出：启动 ASCII banner
+ 
+ ### 全局引用 (ref.py)
+-- `set_app/get_app`, `set_xiaozhi/get_xiaozhi`, `set_xiaoai/get_xiaoai`
++- `set_app/get_app`, `set_xiaoai/get_xiaoai`
+ - `set_vad/get_vad`, `set_kws/get_kws`, `set_speaker/get_speaker`
+-- `set_audio_codec/get_audio_codec`, `set_speech_frames/get_speech_frames`
+ 
+ ### 兼容约束
+ - `CLI` 环境变量不再作为功能开关，不要引入依赖 `CLI` 的运行时分支
+-- `XIAOZHI_ENABLE=0` 时必须允许跳过 KWS 初始化
++- `OPENCLAW_ENABLE=0` 且 `homeassistant.enabled=False` 时必须允许跳过 KWS 初始化
+ - `scripts/start.sh` 在仅小爱模式下不应检查 `core/models/` 下的模型文件
++- Home Assistant 相关的功能开关一律读 `config.py` 的
++  `homeassistant.*`，不要为它引入新的环境变量（保持与 OpenClaw 不对称是
++  故意的设计，不是遗漏）
+ 
+ ## 测试
+ 
+@@ -319,6 +333,9 @@ python3 tests/test_tts_latency.py --formats mp3,pcm --rounds 3 --repeat 8
+ 
+ # OpenClaw 连通性测试
+ python3 tests/test_openclaw_live_connectivity.py
++
++# 唤醒词生成门禁 + KWS 路由单测（无需硬件/网络）
++python3 -m pytest tests/test_wakeup_keywords.py -v
+ ```
+ 
+ ## 音箱设备控制命令
+@@ -356,13 +373,13 @@ python3 tests/test_openclaw_live_connectivity.py
+ | 停止录音 | `open_xiaoai_server.stop_recording()` | 杀掉设备端 `arecord` 进程，麦克风静音 |
+ | 恢复录音 | `open_xiaoai_server.start_recording()` | 重启 `arecord`，音频数据恢复流入 `GlobalStream` |
+ 
+-**注意**：OpenClaw 对话中 TTS 播放时会 `stop_recording` 防止回声。如果在此期间触发中断（"小爱同学"），必须在中断处理中调用 `start_recording` 恢复录音，否则 KWS 将因无音频数据而永久失效。
++**注意**：OpenClaw / Home Assistant 对话中 TTS 播放时会 `stop_recording` 防止回声。如果在此期间触发中断（"小爱同学"），必须在中断处理中调用 `start_recording` 恢复录音，否则 KWS 将因无音频数据而永久失效。
+ 
+ ### on_interrupt 中断处理要点
+ 
+ `on_interrupt()` 触发时（用户喊"小爱同学"），需要完成以下步骤：
+-1. Cancel OpenClaw asyncio task
+-2. 让 OpenClaw controller 自己停止当前 TTS（使用自己持有的 `playback_token`）
++1. Cancel OpenClaw / Home Assistant asyncio task
++2. 让对应的 conversation controller 自己停止当前 TTS（使用自己持有的 `playback_token`）
+ 3. `SpeakerManager.stop_device_audio()` — 停止阻塞 TTS / 非阻塞 TTS / PCM，并重置 PCM 通道
+ 4. `start_recording` — 恢复录音（KWS 依赖此通道）
+ 5. `XiaoAI.stop_conversation()` — 停止连续对话
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 94c410f..9beca22 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,19 @@
+ 
+ All notable changes to this project will be documented in this file.
+ 
++## Unreleased (branch: feature/openclaw-homeassistant-only)
++
++### 重点更新
++
++- 移除 XiaoZhi AI、OpenAI 兼容服务、QwenPaw 三个外部对话后端及全部相关代码/配置/文档，项目现在只保留 **OpenClaw** 和 **Home Assistant** 两条链路。
++- 新增 Home Assistant 连续对话开关 `homeassistant.continuous_conversation`：修复了此前连续对话被错误地绑定到 HA 响应 `continue_conversation` 字段上、导致每次唤醒执行完一条指令就退出的问题。
++
++### 修复与优化
++
++- 修复 Home Assistant 无环境变量开关（纯 `config.py` 驱动）导致的多处遗漏：只开 Home Assistant、关闭 OpenClaw 时，VAD/KWS 音频服务和 `keywords.txt` 唤醒词文件此前都不会生成。
++- 清理 `ConfigManager` 中仅服务于已移除 XiaoZhi ESP32 OTA/MQTT 模拟的死代码。
++- 删除 `testconfig.py`（HA 功能提交时遗留的旧版 `config.py` 备份，未被任何代码引用）。
++
+ ## v1.0.7 - 2026-07-14
+ 
+ ### 重点更新
+diff --git a/Dockerfile b/Dockerfile
+index 5c08475..cdf92c5 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -60,6 +60,10 @@ ENV LD_LIBRARY_PATH=/app/.venv/lib/python3.12/site-packages/onnxruntime/capi
+ # 暴露 API 服务器端口
+ EXPOSE 9092
+ 
+-# 先初始化关键词模型（小智或外部后端启用时），然后启动主程序
+-# 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
+-CMD ["/bin/bash", "-c", "source /app/.venv/bin/activate && OPENCLAW_VAL=\"${OPENCLAW_ENABLE:-${OPENCLAW_ENABLED:-}}\"; if [[ \"${XIAOZHI_ENABLE:-}\" =~ ^(1|true|yes)$ ]] || [[ \"$OPENCLAW_VAL\" =~ ^(1|true|yes)$ ]] || [[ \"${OPENAI_ENABLE:-}\" =~ ^(1|true|yes)$ ]] || [[ \"${QWENPAW_ENABLE:-}\" =~ ^(1|true|yes)$ ]]; then python core/services/audio/kws/keywords.py; fi && python main.py"]
++# 初始化关键词模型（OpenClaw 或 Home Assistant 启用时），然后启动主程序
++#
++# 是否需要生成的判断逻辑统一放在 keywords.py 的 should_generate_keywords()
++# 里维护（OpenClaw 走 OPENCLAW_ENABLE/OPENCLAW_ENABLED 环境变量，
++# Home Assistant 走 config.py 的 homeassistant.enabled），这里不再重复
++# 一份容易失配的 bash 判断。
++CMD ["/bin/bash", "-c", "source /app/.venv/bin/activate && python core/services/audio/kws/keywords.py && python main.py"]
+diff --git a/README.md b/README.md
+index 22be44b..096bf37 100644
+--- a/README.md
++++ b/README.md
+@@ -4,15 +4,15 @@
+ 
+ [![Python](https://img.shields.io/badge/Python-3.12+-3776ab?logo=python&logoColor=white)](https://www.python.org/) [![Rust](https://img.shields.io/badge/Rust-native_module-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![GitHub Stars](https://img.shields.io/github/stars/coderzc/open-xiaoai-bridge?style=flat&logo=github)](https://github.com/coderzc/open-xiaoai-bridge/stargazers) [![Docker Image](https://img.shields.io/badge/ghcr.io-open--xiaoai--bridge-2496ed?logo=docker&logoColor=white)](https://ghcr.io/coderzc/open-xiaoai-bridge)
+ 
+-[![New](https://img.shields.io/badge/🎉_新功能-OpenClaw_支持_自定义唤醒词_|_连续对话_|_多_Agent_路由_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
++[![New](https://img.shields.io/badge/🎉_新功能-Home_Assistant_集成_|_自定义唤醒词_|_连续对话_|_多_Agent_路由_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
+ 
+-**小爱音箱与外部 AI 服务（小智 AI、OpenClaw、OpenAI 兼容服务、QwenPaw）的桥接器**
++**小爱音箱与外部 AI 服务（OpenClaw、Home Assistant）的桥接器**
+ 
+-打破小爱音箱的封闭生态，灵活接入多种 AI 服务，提供 HTTP API 实现远程控制。
++打破小爱音箱的封闭生态，灵活接入 AI Agent 与智能家居，提供 HTTP API 实现远程控制。
+ 
+ [📺 演示 ①](https://www.bilibili.com/video/BV1DHcBz1Ex7) · [📺 演示 ②](https://www.bilibili.com/video/BV1UQQSBHEvg)
+ 
+-[📖 快速开始](#-快速开始) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🐾 QwenPaw 集成](#-qwenpaw-集成) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
++[📖 快速开始](#-快速开始) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🏠 Home Assistant 集成](#-home-assistant-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
+ 
+ > 本项目受 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 启发，并参考其 `examples/xiaozhi/` 示例演进而来，现已作为独立项目持续维护。
+ 
+@@ -24,10 +24,8 @@
+ 
+ | 功能                 | 说明                                                                             |
+ | ------------------ | ------------------------------------------------------------------------------ |
+-| 🔌 **OpenAI 兼容服务** | 接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等 `/v1/chat/completions` 服务 |
+-| 🐾 **QwenPaw 集成**   | 接入 [QwenPaw](https://github.com/agentscope-ai/QwenPaw) HTTP Console 任务接口，支持指定 Agent 和会话 |
+ | 🦞 **OpenClaw 集成** | 接入 [OpenClaw](https://github.com/openclaw/openclaw)，支持连续对话，可选豆包 TTS 或小爱原生 TTS  |
+-| 🤖 **小智 AI 集成**    | 接入 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) 实时音频流 |
++| 🏠 **Home Assistant 集成** | 接入 Home Assistant Conversation API，语音控制智能家居，支持连续对话                  |
+ | 🎙️ **自定义唤醒词**     | 支持中英文，不同唤醒词可路由到不同 AI 服务或不同 OpenClaw Agent                                      |
+ | 🧠 **多 Agent 路由**  | 一台音箱，多个唤醒词，每个唤醒词对应不同的 OpenClaw Agent Session，动态切换零开销                           |
+ | 💬 **连续对话**        | 多轮对话无需反复唤醒，喊"小爱同学"可随时打断                                                        |
+@@ -50,9 +48,9 @@
+ 
+ ### 📥 模型文件
+ 
+-如果你启用小智 AI，或 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
++如果 OpenClaw / Home Assistant 连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
+ 
+-如果 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `xiaoai_asr`，只需要 `VAD + KWS`，不需要本地 ASR 模型。
++如果 OpenClaw / Home Assistant 连续对话使用 `xiaoai_asr`（Home Assistant 默认即为此模式），只需要 `VAD + KWS`，不需要本地 ASR 模型。
+ 
+ 1. 从 [releases](https://github.com/coderzc/open-xiaoai-bridge/releases/tag/vad-kws-asr-models) 下载模型压缩包
+ 2. 解压模型文件（路径见下方具体部署方式）
+@@ -75,7 +73,7 @@ docker compose up -d
+ > image: ghcr.nju.edu.cn/coderzc/open-xiaoai-bridge:latest
+ > ```
+ 
+-> **💡 容器访问宿主机服务**：如果需要让容器访问宿主机上的 OpenClaw / QwenPaw，请查看 [Docker 常见问题](#-docker)。
++> **💡 容器访问宿主机服务**：如果需要让容器访问宿主机上的 OpenClaw / Home Assistant，请查看 [Docker 常见问题](#-docker)。
+ 
+ `docker-compose.yml` 已包含模型目录挂载：
+ 
+@@ -95,8 +93,8 @@ cd open-xiaoai-bridge
+ # 依赖: uv, Rust
+ # Linux 还需要: pkg-config, patchelf
+ 
+-# 启动（按需设置环境变量）
+-API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 QWENPAW_ENABLE=1 ./scripts/start.sh
++# 启动（按需设置环境变量；Home Assistant 没有环境变量开关，在 config.py 中设置 homeassistant.enabled）
++API_SERVER_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
+ 
+ # 启用 Client 鉴权（需与音箱端 token 一致）
+ OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
+@@ -106,18 +104,18 @@ OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
+ 
+ | 变量                   | 说明            | 默认值           |
+ | -------------------- | ------------- | ------------- |
+-| `XIAOZHI_ENABLE`     | 启用小智 AI     | 禁用            |
+ | `OPENCLAW_ENABLE`    | 启用 OpenClaw | 禁用            |
+-| `OPENAI_ENABLE` | 启用 OpenAI 兼容服务 | 禁用        |
+-| `QWENPAW_ENABLE` | 启用 QwenPaw | 禁用        |
+ | `API_SERVER_ENABLE`  | 启用 HTTP API | 禁用            |
+-| `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
++| `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后 KWS/local\_asr不可用） | 启用            |
+ | `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
+ | `API_SERVER_PORT`    | API 监听端口    | `9092`        |
+ | `OPEN_XIAOAI_TOKEN`  | Client 鉴权 token，设置后仅持有相同 token 的 Client 才能连接 | 不鉴权 |
+ | `CONFIG_PATH`        | 自定义配置文件路径   | `./config.py` |
+ | `LOGLEVEL`           | 日志级别        | `INFO`        |
+ 
++> **💡 Home Assistant 没有独立的环境变量开关**，完全由 `config.py` 中的
++> `APP_CONFIG["homeassistant"]["enabled"]` 控制，包括是否启动本地音频服务。
++
+ ***
+ 
+ ## 🏗️ 系统架构
+@@ -142,13 +140,12 @@ flowchart TB
+             VAD["VAD<br/>语音起止检测"]
+             KWS["KWS<br/>唤醒词检测"]
+             ASR["SherpaASR<br/>离线语音识别"]
+-            Codec["AudioCodec<br/>编码 / 播放"]
+         end
+ 
+         subgraph Runtime["运行时控制"]
+             direction LR
+             MainApp["MainApp<br/>主循环 / device_state"]
+-            WakeupMgr["WakeupSessionManager<br/>唤醒会话状态机"]
++            WakeupMgr["WakeupSessionManager<br/>唤醒会话路由"]
+             XiaoAIConv["XiaoAIConversationController<br/>小爱连续对话"]
+             SpeakerMgr["SpeakerManager"]
+             Config["config.py<br/>before/after_wakeup"]
+@@ -156,9 +153,10 @@ flowchart TB
+ 
+         subgraph AIConnectors["AI 连接器（可选）"]
+             direction LR
+-            Xiaozhi["XiaoZhi<br/>小智协议客户端"]
+             OpenclawMgr["OpenClawManager<br/>OpenClaw 网关客户端"]
+             OpenclawConv["OpenClawConversation<br/>连续对话控制器"]
++            HAMgr["HomeAssistantManager<br/>Conversation API 客户端"]
++            HAConv["HomeAssistantConversation<br/>连续对话控制器"]
+         end
+ 
+         subgraph ServicesLayer["服务层（可选）"]
+@@ -170,10 +168,10 @@ flowchart TB
+ 
+     subgraph ExternalServices["☁️ 外部服务"]
+         direction TB
+-        XiaozhiServer["xiaozhi-esp32-server"]
+         OpenclawGW["OpenClaw Gateway"]
++        HAServer["Home Assistant"]
+         DoubaoTTS["豆包语音服务"]
+-        XiaozhiServer ~~~ OpenclawGW ~~~ DoubaoTTS
++        OpenclawGW ~~~ HAServer ~~~ DoubaoTTS
+     end
+ 
+     subgraph APIClients["🌐 API 客户端"]
+@@ -192,25 +190,16 @@ flowchart TB
+     XiaoaiPy -->|"输入音频"| GlobalStream
+     GlobalStream --> KWS
+     GlobalStream --> VAD
+-    GlobalStream --> Codec
+ 
+     %% ===== 控制流 =====
+     Config -->|"before/after_wakeup"| WakeupMgr
+     MainApp -->|"初始化 / 主 loop"| WakeupMgr
+-    MainApp -->|"device_state"| Codec
+     MainApp -->|"device_state"| SpeakerMgr
+     XiaoaiPy -->|"ASR / playing / AudioPlayer"| WakeupMgr
+     XiaoaiPy -->|"AudioPlayer / playing"| XiaoAIConv
+     KWS -->|"唤醒词"| WakeupMgr
+     VAD -->|"speech / silence"| WakeupMgr
+ 
+-    %% ===== 小智对话链路（可选） =====
+-    WakeupMgr -->|"listen start / stop"| Xiaozhi
+-    MainApp -->|"启动 / 回调接线"| Xiaozhi
+-    Codec -->|"编码音频"| Xiaozhi
+-    Xiaozhi -->|"TTS / STT / LLM"| MainApp
+-    Xiaozhi <-->|"WebSocket"| XiaozhiServer
+-
+     %% ===== OpenClaw 链路（可选） =====
+     MainApp -.->|"启动"| OpenclawMgr
+     MainApp -.->|"send_to_openclaw()"| OpenclawMgr
+@@ -221,9 +210,15 @@ flowchart TB
+     OpenclawConv -.->|"发送消息"| OpenclawMgr
+     OpenclawConv -.->|"播放回复"| TTSModule
+ 
++    %% ===== Home Assistant 链路（可选） =====
++    WakeupMgr -.->|"唤醒词路由"| HAConv
++    HAConv -.->|"接管原生 ASR / VAD 监听"| VAD
++    HAConv -.->|"提交语音指令"| HAMgr
++    HAMgr <-->|"HTTP<br/>/api/conversation/process"| HAServer
++    HAConv -.->|"小爱原生 TTS 播放"| SpeakerMgr
++
+     %% ===== 播放回路 =====
+     SpeakerMgr -->|"play()"| XiaoaiPy
+-    Codec -->|"播放音频"| XiaoaiPy
+ 
+     %% ===== 服务层 =====
+     MainApp -.->|"启动"| APIServer
+@@ -250,20 +245,19 @@ flowchart TB
+     class Mic,Speaker,XiaoaiOS hardware
+     class AudioCapture,WSServer rust
+     class MainApp,WakeupMgr,XiaoAIConv,SpeakerMgr,Config,GlobalStream core
+-    class VAD,KWS,ASR,Codec audio
+-    class XiaoaiPy,Xiaozhi,OpenclawMgr,OpenclawConv connector
++    class VAD,KWS,ASR audio
++    class XiaoaiPy,OpenclawMgr,OpenclawConv,HAMgr,HAConv connector
+     class APIServer,TTSModule api
+-    class XiaozhiServer,OpenclawGW,DoubaoTTS,Curl,XiaoaiTTS external
++    class OpenclawGW,HAServer,DoubaoTTS,Curl,XiaoaiTTS external
+ ```
+ 
+ ### 工作流程
+ 
+-**🎯 小智唤醒与对话**
++**🎯 唤醒与路由**
+ 
+ ```
+ 麦克风 → client → server → XiaoAI → GlobalStream → KWS/小爱 ASR
+-→ WakeupSessionManager → before_wakeup() → VAD speech/silence
+-→ XiaoZhi start/stop listening → xiaozhi-esp32-server
++→ WakeupSessionManager → before_wakeup() → 返回 "openclaw" / "homeassistant" / None
+ ```
+ 
+ **🔄 小爱连续对话**
+@@ -290,6 +284,14 @@ flowchart TB
+ → 说"退出"/"再见"退出
+ ```
+ 
++**🏠 Home Assistant 连续对话**
++
++```
++唤醒词 "你好小p" → WakeupSessionManager → HomeAssistantConversationController
++→ 静默唤醒小爱 → 接管小爱原生 ASR → HA Conversation API → 小爱原生 TTS 播放
++→ 静音超时 / 说退出词 退出；HA 若返回 continue_conversation=True（自身追问）则继续等待一轮
++```
++
+ **🌐 远程控制**
+ 
+ ```
+@@ -344,136 +346,6 @@ curl -X POST http://localhost:9092/api/interrupt
+ 
+ ***
+ 
+-## 🔌 OpenAI 兼容服务
+-
+-用于接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等兼容 OpenAI Chat Completions 的服务。它是独立后端，不依赖 OpenClaw 协议。
+-
+-设置 `OPENAI_ENABLE=1` 启用。
+-
+-`config.py` 示例：
+-
+-```python
+-"openai": {
+-    "base_url": "http://127.0.0.1:8000/v1",
+-    "api_key": "",
+-    "model": "gpt-4o-mini",
+-    "input_mode": "local_asr",  # 或 "xiaoai_asr"
+-    "session_key": "default",
+-    "system_prompt": "",
+-    "temperature": 0.7,
+-    "max_tokens": 512,
+-    "history_max_messages": 20,
+-    "tts_speaker": "xiaoai",
+-}
+-```
+-
+-触发连续对话时，在 `before_wakeup` 中返回 `"openai"`：
+-
+-```python
+-async def before_wakeup(speaker, text, source, app):
+-    if source == "kws" and "小黑" in text:
+-        await speaker.play(text="小黑来了")
+-        return "openai"
+-
+-    if source == "xiaoai" and text == "召唤小黑":
+-        await speaker.abort_xiaoai()
+-        return "openai"
+-```
+-
+-单次发送并播报：
+-
+-```python
+-if "让小黑" in text:
+-    await speaker.abort_xiaoai()
+-    await app.send_to_openai_and_play_reply(text.replace("让小黑", ""))
+-    return None
+-```
+-
+-`base_url` 可以直接填到 `/v1`，框架会自动调用 `/chat/completions`；如果你的服务已经给出完整 `/v1/chat/completions` 地址，也可以直接填写完整地址。连续对话会按 `session_key` 保存最近 `history_max_messages` 条上下文；需要隔离多个助手时，可在唤醒前调用 `app.set_openai_session_key("assistant-name")`。
+-
+-## 🐾 QwenPaw 集成
+-
+-用于接入阿里的 [QwenPaw](https://github.com/agentscope-ai/QwenPaw)。桥接器会调用 QwenPaw 的 HTTP Console 后台任务接口，将小爱音箱识别到的文本发送给指定 Agent，并把回复通过小爱或豆包 TTS 播放出来。
+-
+-推荐使用 Docker Compose 运行桥接器。先启动 QwenPaw（可在宿主机或同一 Docker 网络中运行），然后在 `docker-compose.yml` 中启用：
+-
+-```yaml
+-services:
+-  open-xiaoai-bridge:
+-    environment:
+-      - QWENPAW_ENABLE=1
+-```
+-
+-修改完成后启动桥接器：
+-
+-```bash
+-docker compose up -d
+-```
+-
+-如果 QwenPaw 运行在宿主机，容器里的 `127.0.0.1` 指向容器自身，需将 `base_url` 改为宿主机可访问地址，例如宿主机局域网 IP：
+-
+-```python
+-"qwenpaw": {
+-    "base_url": "http://192.168.1.10:8088",
+-    "agent_id": "default",
+-    "session_key": "open-xiaoai-bridge",
+-}
+-```
+-
+-也可以按 [Docker 常见问题](#-docker) 使用 `network_mode: host`，此时可继续使用 `http://127.0.0.1:8088`。
+-
+-`config.py` 示例：
+-
+-```python
+-"qwenpaw": {
+-    "base_url": "http://127.0.0.1:8088",
+-    "agent_id": "default",
+-    "user_id": "open-xiaoai-bridge",
+-    "input_mode": "local_asr",  # 或 "xiaoai_asr"
+-    "session_key": "open-xiaoai-bridge",
+-    "send_path": "/api/console/chat/task",
+-    "task_status_path": "/api/console/chat/task/{task_id}",
+-    "auth_token": "",
+-    "tts_speaker": "xiaoai",
+-}
+-```
+-
+-触发连续对话时，在 `before_wakeup` 中返回 `"qwenpaw"`：
+-
+-```python
+-async def before_wakeup(speaker, text, source, app):
+-    if source == "kws" and "小爪" in text:
+-        await speaker.play(text="小爪来了")
+-        return "qwenpaw"
+-
+-    if source == "xiaoai" and text == "召唤小爪":
+-        await speaker.abort_xiaoai()
+-        return "qwenpaw"
+-```
+-
+-单次发送并播报：
+-
+-```python
+-if "让小爪" in text:
+-    await speaker.abort_xiaoai()
+-    await app.send_to_qwenpaw_and_play_reply(text.replace("让小爪", ""))
+-    return None
+-```
+-
+-`agent_id` 会通过 `X-Agent-Id` 请求头发送给 QwenPaw；`session_key` 对应 QwenPaw 请求里的 `session_id`，需要隔离多个对话时可在唤醒前调用 `app.set_qwenpaw_session_key("speaker-session")`。
+-
+-`auth_token` 是可选项，非空时程序默认会附带 `Authorization` 认证头，不需要额外配置 `auth_header` / `auth_scheme`。如果你的部署要求自定义认证头，可按需增加：
+-
+-```python
+-"qwenpaw": {
+-    "auth_header": "X-API-Key",
+-    "auth_scheme": "",
+-    "auth_token": "your-token",
+-}
+-```
+-
+-`auth_scheme` 设为空字符串时，请求头会直接发送 `auth_token` 原始值。
+-
+ ## 🦞 OpenClaw 集成
+ 
+ 通过 [OpenClaw](https://github.com/openclaw/openclaw) 将小爱音箱变成你的 AI Agent 终端。
+@@ -540,11 +412,10 @@ if "告诉龙虾" in text:
+ ```python
+ "wakeup": {
+     "keywords": [
+-        "你好小智",        # 中文
+-        "小智小智",
+         "hi openclaw",    # 英文（全小写）
+         "你好龙虾",
+         "龙虾你好",
++        "你好小p",         # 路由到 Home Assistant
+     ],
+ },
+ ```
+@@ -557,22 +428,19 @@ async def before_wakeup(speaker, text, source, app):
+         if "龙虾" in text:
+             await speaker.play(text="龙虾来了")
+             return "openclaw"    # → OpenClaw 连续对话
+-        if "小智" in text:
+-            await speaker.play(text="小智来了")
+-            return "xiaozhi"     # → 小智 AI
++        if "小p" in text:
++            await speaker.play(text="我来了")
++            return "homeassistant"  # → Home Assistant 连续对话
+         return None              # → 不处理
+ 
+     if source == "xiaoai":       # 小爱语音指令
+         if text == "召唤龙虾":
+             await speaker.abort_xiaoai()
+             return "openclaw"
+-        if text == "召唤小智":
+-            await speaker.abort_xiaoai()
+-            return "xiaozhi"
+     # 返回 None → 交给小爱原生处理
+ ```
+ 
+-**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"openai"` → OpenAI 兼容服务连续对话，`"qwenpaw"` → QwenPaw 连续对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` / `app.send_to_openai()` / `app.send_to_qwenpaw()` 等方法）
++**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"homeassistant"` → Home Assistant 连续对话，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` 等方法）
+ 
+ ### 🧠 多 Agent 路由 — 一个唤醒词，一个专属 Agent
+ 
+@@ -632,8 +500,8 @@ async def after_wakeup(speaker, source=None, session_key=None):
+             await speaker.play(text="管家，再见")
+         else:
+             await speaker.play(text="再见")
+-    if source == "xiaozhi":
+-        await speaker.play(text="小智，再见")
++    if source == "homeassistant":
++        await speaker.play(text="我先退下了")
+ ```
+ 
+ ### 📝 rule_prompt — 约束 Agent 输出格式
+@@ -698,30 +566,60 @@ async def after_wakeup(speaker, source=None, session_key=None):
+ 
+ ***
+ 
+-## 🤖 小智 AI 集成
++## 🏠 Home Assistant 集成
+ 
+-接入 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server)，使用小智 AI 的对话能力。
++通过 [Home Assistant](https://www.home-assistant.io/) 的 Conversation API，用小爱音箱语音控制智能家居。
+ 
+-设置 `XIAOZHI_ENABLE=1` 启用
++**没有独立的环境变量开关**，在 `config.py` 中设置 `homeassistant.enabled = True` 即可启用（包括是否启动本地音频服务，也是读这个开关）。
+ 
+ ### 配置
+ 
+ ```python
+ APP_CONFIG = {
+-    "xiaozhi": {
+-        "OTA_URL": "http://127.0.0.1:8003/xiaozhi/ota/",
+-        "WEBSOCKET_URL": "ws://127.0.0.1:8000/xiaozhi/v1/",
+-        "WEBSOCKET_ACCESS_TOKEN": "",  # 可选
+-        # "DEVICE_ID": "",  # 可选，默认自动生成
++    "homeassistant": {
++        "enabled": True,
++        "base_url": "http://192.168.1.10:8123",
++        "token": "你的 HA Long-Lived Access Token",
++        # 留空则使用 HA 默认 Agent，例如 "conversation.home_assistant"
++        "agent_id": "",
++        # xiaoai_asr（默认）：接管小爱原生 ASR；local_asr：本地 VAD + SherpaASR
++        "input_mode": "xiaoai_asr",
++        "response_timeout": 120,
++        # 等待小爱原生 ASR 的超时时间
++        "timeout": 30,
++        # 是否保持 HA 的 conversation_id（跨轮次记忆上下文）
++        "keep_conversation": True,
++        # 是否开启连续对话，见下方说明
++        "continuous_conversation": True,
++        "session_key": "homeassistant:open-xiaoai-bridge",
++        "language": "zh-CN",
++        "exit_keywords": ["退出", "停止", "再见", "退下", "结束对话"],
++        # TTS：当前只支持小爱原生 TTS
++        "tts_speaker": "xiaoai",
++        "intro_prompt": "",          # 进入对话时的提示语，留空不播放
++        "exit_prompt": "好的，再见",
++        "rule_prompt": "注意：这是通过小爱音箱进行的语音对话，请直接返回适合语音播报的纯文字内容，不要使用 Markdown、代码块或特殊格式，回答尽量简洁。",
+     },
+ }
+ ```
+ 
+-### 使用
++触发方式与 OpenClaw 一致，在 `before_wakeup` 中返回 `"homeassistant"` 即进入连续对话，见[自定义唤醒词](#-自定义唤醒词)章节。
++
++### 💬 连续对话开关
++
++`homeassistant.continuous_conversation` 控制唤醒一次后能否连续下达多条指令：
++
++| 值 | 效果 |
++|----|------|
++| `True`（默认） | 唤醒一次可连续说多条指令（"打开客厅灯" → "再打开卧室灯"），直到静音超过 `timeout` 秒或说出 `exit_keywords` 才结束 |
++| `False` | 每次唤醒只执行一条指令就结束（更接近传统"一次唤醒一次命令"体验） |
++
++> ⚠️ **`continue_conversation` 不是这个开关**：HA 响应里也有一个同名字段，但那是 HA 自己判断"是否需要追问一句"的信号（比如设置计时器缺少时长），语义完全不同——普通指令执行完 HA 几乎总是返回 `false`。即使 `continuous_conversation` 设为 `False`，如果 HA 确实返回了 `continue_conversation: true`（它在等你回答追问），程序仍会等一轮，不会打断 HA 自己的澄清流程。
+ 
+-唤醒词触发后，`before_wakeup` 返回 `"xiaozhi"` 即进入小智对话流程。
++### 🎙️ 输入模式
+ 
+-详见[自定义唤醒词](#-自定义唤醒词)章节。
++- `xiaoai_asr`（默认，推荐）：唤醒小爱后接管其原生 ASR 结果发给 HA，不需要本地 ASR 模型
++- `local_asr`：目前尚未完整支持（`HomeAssistantManager` 还没实现该模式所需的方法），暂时请使用 `xiaoai_asr`
+ 
+ ***
+ 
+@@ -729,13 +627,13 @@ APP_CONFIG = {
+ 
+ ### 🐳 Docker
+ 
+-1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw？**
++1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw / Home Assistant？**
+ 
+     默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
+ 
+     需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是宿主机。
+ 
+-    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw，使用 **方式 1**:
++    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw / Home Assistant，使用 **方式 1**:
+ 
+     **方式 1：增加 `network_mode: host`**
+ 
+@@ -749,7 +647,7 @@ APP_CONFIG = {
+ 
+     **方式 2：通过网络 IP 连接（无需 host 模式）**
+ 
+-    如果不使用 `network_mode: host`，可以让 OpenClaw / QwenPaw 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
++    如果不使用 `network_mode: host`，可以让 OpenClaw / Home Assistant 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
+ 
+     可以直接一起改成下面这样：
+ 
+@@ -783,14 +681,14 @@ APP_CONFIG = {
+ 
+ 1. **模型文件在哪下载？**
+ 
+-    小智 AI 和 `local_asr` 模式需要 `VAD + KWS + ASR` 模型文件。  
++    `local_asr` 模式需要 `VAD + KWS + ASR` 模型文件。
+     `xiaoai_asr` 模式只需要 `VAD + KWS`。
+ 
+     详见[快速开始 - Docker Compose](#-docker-compose推荐) 或 [本地编译](#-本地编译) 章节。
+ 
+ 2. **如何切换 ASR 语音识别模型？**
+ 
+-    仅 `openclaw.input_mode = "local_asr"` 时，ASR 配置才会生效。在 `config.py` 中配置：
++    仅 `openclaw.input_mode = "local_asr"` 时，ASR 配置才会生效（Home Assistant 目前只支持 `xiaoai_asr`）。在 `config.py` 中配置：
+ 
+     ```python
+     APP_CONFIG = {
+@@ -844,7 +742,7 @@ APP_CONFIG = {
+ 
+ 3. **如何打断 AI 的回答？**
+ 
+-    直接喊"小爱同学"即可打断小智或 OpenClaw 的回答。
++    直接喊"小爱同学"即可打断 OpenClaw 或 Home Assistant 的回答。
+ 
+ 4. **话没说完 AI 就开始回答？**
+ 
+@@ -862,7 +760,7 @@ APP_CONFIG = {
+ 
+     - 调低 `vad.threshold`（越小越灵敏，如 `0.05`）
+     - 启动后需等约 30s 加载模型
+-    - 英文唤醒词用空格分开（如 `"open ai"`）
++    - 英文唤醒词用空格分开（如 `"hi openclaw"`）
+     - 换更易识别的唤醒词
+ 
+ 6. **麦克风音量太小，唤醒词 / ASR 识别不准？**
+@@ -986,34 +884,23 @@ APP_CONFIG = {
+     - `send_to_openclaw(text, wait_response=True)` → 成功返回回复文本，超时/失败返回 `None`
+     - `send_to_openclaw_and_play_reply(text)` → 同上，但会自动 TTS 播放回复
+ 
+-### 🤖 小智 AI
++### 🏠 Home Assistant
+ 
+-1. **第一次运行提示验证码绑定设备？**
++1. **Long-Lived Access Token 在哪里生成？**
+ 
+-    打开小智 AI [管理后台](https://xiaozhi.me/)，根据提示创建 Agent 绑定设备。验证码会在终端打印或写入 `config.py`：
++    HA 后台 → 点击左下角用户头像 → 拉到最下方"长期访问令牌" → 创建令牌，复制后填入 `config.py` 的 `homeassistant.token`。
+ 
+-    ```python
+-    APP_CONFIG = {
+-        "xiaozhi": {
+-            "VERIFICATION_CODE": "首次登录时，验证码会在这里更新",
+-        },
+-    }
+-    ```
++2. **`agent_id` 应该填什么？**
+ 
+-    绑定成功后可能需要重启应用。
++    留空使用 HA 的默认 Agent。如果你配置了多个 Conversation Agent（比如接了 Ollama/Qwen 的对话代理），在 HA 里找到对应实体 ID（形如 `conversation.xxx`）填进去。
+ 
+-2. **怎样使用自己部署的 xiaozhi-esp32-server？**
++3. **说完一句指令就退出了，怎么连续下命令？**
+ 
+-    修改 `config.py` 中的接口地址：
++    检查 `homeassistant.continuous_conversation` 是否为 `True`（默认就是）。如果已经是 `True` 还是只执行一轮，可能是升级前的旧版本——旧实现曾错误地直接用 HA 响应里的 `continue_conversation` 字段判断是否继续，而这个字段绝大多数情况下都是 `false`（见上方[连续对话开关](#-连续对话开关)说明）。
+ 
+-    ```python
+-    APP_CONFIG = {
+-        "xiaozhi": {
+-            "OTA_URL": "https://your-server/xiaozhi/ota/",
+-            "WEBSOCKET_URL": "wss://your-server/xiaozhi/v1/",
+-        },
+-    }
+-    ```
++4. **HA 一直没反应 / 超时？**
++
++    检查 `base_url` 是否是桥接器容器/进程能访问到的地址（Docker 部署时不能用 `127.0.0.1` 指代宿主机，参考 [Docker 常见问题](#-docker)），以及 `token` 是否过期。也可以调大 `homeassistant.response_timeout`。
+ 
+ ### 🎵 豆包 TTS
+ 
+@@ -1046,7 +933,7 @@ APP_CONFIG = {
+    4. **重要**：确保复刻音色与 `tts.doubao.app_id` 属于**同一个火山引擎项目**，否则无法使用。
+ 3. **如何将指定文本转成特定音色的音频文件？**
+ 
+-   可以使用脚本 [scripts/generate\_tts.py](/Users/zc/projects/open-xiaoai-bridge/scripts/generate_tts.py)：
++   可以使用脚本 [scripts/generate_tts.py](scripts/generate_tts.py)：
+    ```bash
+    python3 scripts/generate_tts.py \
+      --speaker-id zh_male_lengkugege_emo_v2_mars_bigtts \
+diff --git a/config.py b/config.py
+index 93ac76b..6e5b25c 100644
+--- a/config.py
++++ b/config.py
+@@ -26,14 +26,12 @@ async def before_wakeup(speaker, text, source, app):
+         source  : 唤醒来源
+                     'kws'    — 本地关键词唤醒（用户说了唤醒词）
+                     'xiaoai' — 小爱同学收到用户语音指令
+-        app     : MainApp 实例，可调用 send_to_openclaw / send_to_openai / send_to_qwenpaw 等方法
++        app     : MainApp 实例，可调用 send_to_openclaw 等方法
+ 
+     返回值：
+-        "openclaw" — 进入 OpenClaw 连续对话流程
+-        "openai"   — 进入 OpenAI 兼容服务连续对话流程（例如 Hermes Agent API Server）
+-        "qwenpaw"  — 进入 QwenPaw 连续对话流程
+-        "xiaozhi"  — 进入小智 AI 流程
+-        None       — 不做额外处理（可在此自行调用 app.send_to_openclaw 等）
++        "openclaw"      — 进入 OpenClaw 连续对话流程
++        "homeassistant" — 进入 Home Assistant 连续对话流程
++        None            — 不做额外处理（可在此自行调用 app.send_to_openclaw 等）
+ 
+     ---
+     动态切换 session_key：
+@@ -71,24 +69,11 @@ async def before_wakeup(speaker, text, source, app):
+             await speaker.play(text="龙虾来了")
+             return "openclaw"
+ 
+-        if "小黑" in text:
+-            await speaker.play(text="小黑来了")
+-            return "openai"
+-
+-        if "小爪" in text:
+-            await speaker.play(text="小爪来了")
+-            return "qwenpaw"
+-
+-        if "小智" in text:
+-            await speaker.play(text="小智来了")
+-            return "xiaozhi"
+-
++        # Route to Home Assistant by wake word
+         if "小▁p" in text:
+             await speaker.play(text="我来了")
+             return "homeassistant"
+-        if "美美" in text:
+-            await speaker.play(text="干嘛！我在写作业！")
+-            return "openai"
++
+         return None
+ 
+     if source == "xiaoai":
+@@ -106,11 +91,9 @@ async def after_wakeup(speaker, source=None, session_key=None):
+     退出唤醒状态
+ 
+     - source: 退出来源
+-        - 'xiaozhi': 小智对话超时退出
+         - 'openclaw': OpenClaw 连续对话退出
+-        - 'openai': OpenAI 兼容服务连续对话退出
+-        - 'qwenpaw': QwenPaw 连续对话退出
+-    - session_key: 当前 OpenClaw/OpenAI/QwenPaw 后端 session_key
++        - 'homeassistant': Home Assistant 连续对话退出
++    - session_key: 当前 OpenClaw 后端 session_key
+         可据此区分是哪个 Agent 退出，例如播放不同的退出提示语
+     """
+     if source == "openclaw":
+@@ -129,10 +112,6 @@ async def after_wakeup(speaker, source=None, session_key=None):
+         # else:
+         #     await speaker.play(text="再见")
+         await speaker.play(text="龙虾，再见")
+-    if source == "qwenpaw":
+-        await speaker.play(text="小爪，再见")
+-    if source == "xiaozhi":
+-        await speaker.play(text="小智，再见")
+     if source == "homeassistant":
+         await speaker.play(text="我先退下了")
+            
+@@ -141,18 +120,12 @@ APP_CONFIG = {
+     "wakeup": {
+         # 自定义唤醒词列表（英文字母要全小写）
+         "keywords": [
+-            "你好小智",
+-            "小智小智",
+             "hi open claw",
+             "你好龙虾",
+             "龙虾你好",
+             "你好小p",
+             "小p你好",
+             "小p",
+-            "美美",
+-            "小黑你好",
+-            "你好小爪",
+-            "小爪你好",
+         ],
+         # 静音多久后自动退出唤醒（秒）
+         "timeout": 20,
+@@ -208,13 +181,6 @@ APP_CONFIG = {
+             "max_wait_seconds": 20,
+         },
+     },
+-    "xiaozhi": {
+-        "OTA_URL": "http://127.0.0.1:8003/xiaozhi/ota/",
+-        "WEBSOCKET_URL": "ws://127.0.0.1:8000/xiaozhi/v1/",
+-        "WEBSOCKET_ACCESS_TOKEN": "", #（可选）一般用不到这个值
+-        "DEVICE_ID": "9e:dd:0f:d9:0a:1f", #（可选）默认自动生成
+-        "VERIFICATION_CODE": "", # 首次登陆时，验证码会在这里更新
+-    },
+     "xiaoai": {
+         "continuous_conversation_mode": True,
+         "exit_command_keywords": ["停止", "退下", "退出", "下去吧"],
+@@ -272,70 +238,13 @@ APP_CONFIG = {
+         #   - 告诉 Agent 需要调用 xiaoai-tts skill 来播报，因为服务端不会自动播放
+         "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字，调用 `xiaoai-tts` skill 播报出来。字数控制在300字以内"
+     },
+-    # OpenAI-compatible Service Configuration
+-    # 可接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等兼容 /v1/chat/completions 的服务
+-    "openai": {
+-        "base_url": "http://192.168.100.80:4000/v1",
+-        "api_key": "sk-fnos-homeassistant",
+-        "model": "qwen3:14b",
+-        # 输入模式：
+-        #   - "local_asr": 使用本地 VAD + SherpaASR
+-        #   - "xiaoai_asr": 接管小爱原生 ASR 结果
+-        "input_mode": "local_asr",
+-        # session_key 统一采用 agent:<agentId>:<rest> 格式，便于 after_wakeup 解析
+-        "session_key": "agent:default:open-xiaoai-bridge",
+-        # 可选：把 session_key 作为请求头发给服务端，用于服务端长期记忆作用域。
+-        # 默认设为 Hermes 的 "X-Hermes-Session-Key"；它只用于长期记忆作用域，
+-        # chat/completions 仍是无状态（历史仍由 messages 携带），不会重复。
+-        # 接标准 OpenAI/Ollama/LM Studio 时该头会被忽略（无害），如需彻底关闭可留空。
+-        "session_header": "X-Hermes-Session-Key",
+-        "system_prompt": "",
+-        "temperature": 0.7,
+-        "max_tokens": 512,
+-        "history_max_messages": 20,
+-        "response_timeout": 120,
+-        "tts_speed": 1.0,
+-        "tts_speaker": "xiaoai",
+-        "session_tts_speakers": {},
+-        "exit_keywords": ["退出", "停止", "再见"],
+-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
+-        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字。字数控制在300字以内",
+-        "extra_body": {},
+-    },
+-    # QwenPaw Configuration
+-    # 需先启动 QwenPaw: qwenpaw app
+-    "qwenpaw": {
+-        "base_url": "http://127.0.0.1:8088",
+-        # agent_id 仅作为回退：当 session_key 不含 agentId 时才使用。
+-        # 正常情况下 agentId 直接从 session_key 的第二段解析，无需单独配置。
+-        "agent_id": "default",
+-        "user_id": "open-xiaoai-bridge",
+-        # 输入模式：
+-        #   - "local_asr": 使用本地 VAD + SherpaASR
+-        #   - "xiaoai_asr": 接管小爱原生 ASR 结果
+-        "input_mode": "local_asr",
+-        # session_key 采用 agent:<agentId>:<sessionId> 格式：
+-        #   - 第二段 agentId 作为 X-Agent-Id 请求头发给服务端
+-        #   - 第三段起为 sessionId，作为请求体 session_id 发给服务端
+-        # 例如 agent:default:open-xiaoai-bridge -> agent=default, session=open-xiaoai-bridge
+-        "session_key": "agent:default:open-xiaoai-bridge",
+-        # QwenPaw 当前推荐使用后台任务接口：
+-        # POST /api/console/chat/task -> GET /api/console/chat/task/{task_id}
+-        "send_path": "/api/console/chat/task",
+-        "task_status_path": "/api/console/chat/task/{task_id}",
+-        # 认证（可选）：非空时默认使用 Authorization 认证头
+-        "auth_token": "",
+-        "response_timeout": 120,
+-        "poll_interval": 0.5,
+-        "tts_speed": 1.0,
+-        "tts_speaker": "xiaoai",
+-        "session_tts_speakers": {},
+-        "exit_keywords": ["退出", "停止", "再见"],
+-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
+-        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送给 QwenPaw 的，他看不到你回复的文字。字数控制在300字以内",
+-    },
+-       "homeassistant": {
++    # Home Assistant Configuration
++    "homeassistant": {
+         # 是否启用
++        #
++        # 注意：Home Assistant 没有独立的环境变量开关（不同于
++        # OPENCLAW_ENABLE），完全由这里的 enabled 值控制，
++        # 包括是否启动本地 VAD/KWS 音频服务。
+         "enabled": False,
+ 
+         # Home Assistant 地址
+diff --git a/core/app.py b/core/app.py
+index 30ff6ec..c544883 100644
+--- a/core/app.py
++++ b/core/app.py
+@@ -2,10 +2,8 @@
+ 
+ This module manages the main application flow, coordinating between:
+ - XiaoAI (Xiaomi speaker service)
+-- XiaoZhi (AI conversation service)
+ - OpenClaw (External integration)
+-- OpenAI (OpenAI-compatible chat service)
+-- QwenPaw (QwenPaw personal agent workstation)
++- Home Assistant (Conversation API integration, config-driven — see config.py)
+ - Audio system (VAD, KWS, Codec)
+ """
+ 
+@@ -14,9 +12,8 @@ import os
+ import threading
+ import time
+ 
+-from core.xiaozhi import XiaoZhi
+ from core.xiaoai import XiaoAI
+-from core.ref import set_xiaozhi, set_app
++from core.ref import set_app
+ from core.utils.config import ConfigManager
+ from core.utils.logger import logger
+ from core.services.protocols.typing import (
+@@ -24,8 +21,6 @@ from core.services.protocols.typing import (
+     EventType,
+ )
+ from core.openclaw import OpenClawManager
+-from core.openai import OpenAIManager
+-from core.qwenpaw import QwenPawManager
+ from core.services.api_server import APIServer
+ 
+ 
+@@ -37,40 +32,32 @@ class MainApp:
+     @classmethod
+     def instance(
+         cls,
+-        enable_xiaozhi: bool = True,
+         enable_openclaw: bool = False,
+-        enable_openai: bool = False,
+-        enable_qwenpaw: bool = False,
+     ):
+         """Get singleton instance.
+ 
+         Args:
+-            enable_xiaozhi: Whether to enable XiaoZhi AI connection (default: True)
+             enable_openclaw: Whether to enable OpenClaw connection (default: False)
+-            enable_qwenpaw: Whether to enable QwenPaw connection (default: False)
++
++        Note:
++            Home Assistant is not gated by a flag here — it is enabled purely
++            via config.py's ``homeassistant.enabled`` and dispatched through
++            WakeupSessionManager (see core/wakeup_session.py).
+         """
+         if cls._instance is None:
+             cls._instance = MainApp(
+-                enable_xiaozhi=enable_xiaozhi,
+                 enable_openclaw=enable_openclaw,
+-                enable_openai=enable_openai,
+-                enable_qwenpaw=enable_qwenpaw,
+             )
+         return cls._instance
+ 
+     def __init__(
+         self,
+-        enable_xiaozhi: bool = True,
+         enable_openclaw: bool = False,
+-        enable_openai: bool = False,
+-        enable_qwenpaw: bool = False,
+     ):
+         """Initialize the main application.
+ 
+         Args:
+-            enable_xiaozhi: Whether to enable XiaoZhi AI connection
+             enable_openclaw: Whether to enable OpenClaw connection
+-            enable_qwenpaw: Whether to enable QwenPaw connection
+         """
+         if MainApp._instance is not None:
+             raise Exception("MainApp is singleton, use instance() to get instance")
+@@ -80,10 +67,7 @@ class MainApp:
+         self.config = ConfigManager.instance()
+ 
+         # Feature flags
+-        self._enable_xiaozhi = enable_xiaozhi
+         self._enable_openclaw = enable_openclaw
+-        self._enable_openai = enable_openai
+-        self._enable_qwenpaw = enable_qwenpaw
+ 
+         # Device state
+         self.device_state = DeviceState.IDLE
+@@ -104,24 +88,25 @@ class MainApp:
+         # Events
+         self.events = {
+             EventType.SCHEDULE_EVENT: threading.Event(),
+-            EventType.AUDIO_INPUT_READY_EVENT: threading.Event(),
+         }
+ 
+-        # XiaoZhi instance (protocol layer)
+-        self.xiaozhi = None
+-
+         # API Server
+         self.api_server = None
+         self._enable_api_server = False
+ 
+         set_app(self)
+ 
+-    @property
+-    def protocol(self):
+-        """Access XiaoZhi protocol for backward compatibility."""
+-        if self.xiaozhi:
+-            return self.xiaozhi.protocol
+-        return None
++    def _homeassistant_enabled(self) -> bool:
++        """Whether Home Assistant integration is enabled via config.py.
++
++        Home Assistant has no CLI/env feature flag (unlike OpenClaw); it is
++        purely config-driven. Any check that needs to know "should the
++        wakeup/audio pipeline be running for an external backend" must
++        include this, or Home Assistant will silently never receive audio.
++        """
++        return bool(
++            self.config.get_app_config("homeassistant.enabled", False)
++        )
+ 
+     def run(self, enable_api_server: bool = False):
+         """Start the main application.
+@@ -131,17 +116,13 @@ class MainApp:
+         """
+         self._enable_api_server = enable_api_server
+ 
++        homeassistant_enabled = self._homeassistant_enabled()
++
+         # Check audio input status
+         audio_input_enabled = os.environ.get(
+             "AUDIO_INPUT_ENABLE", "true"
+         ).strip().lower() in ("true", "1", "yes", "on")
+-        
+-        if not audio_input_enabled and self._enable_xiaozhi:
+-            raise RuntimeError(
+-                "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but XiaoZhi is enabled. "
+-                "Either enable audio input or disable XiaoZhi."
+-            )
+-        
++
+         if not audio_input_enabled:
+             local_asr_backends = []
+             if (
+@@ -151,17 +132,11 @@ class MainApp:
+             ):
+                 local_asr_backends.append("OpenClaw")
+             if (
+-                self._enable_openai
+-                and self.config.get_app_config("openai.input_mode", "local_asr")
+-                == "local_asr"
+-            ):
+-                local_asr_backends.append("OpenAI")
+-            if (
+-                self._enable_qwenpaw
+-                and self.config.get_app_config("qwenpaw.input_mode", "local_asr")
++                homeassistant_enabled
++                and self.config.get_app_config("homeassistant.input_mode", "xiaoai_asr")
+                 == "local_asr"
+             ):
+-                local_asr_backends.append("QwenPaw")
++                local_asr_backends.append("Home Assistant")
+             if local_asr_backends:
+                 raise RuntimeError(
+                     "Audio input is disabled (AUDIO_INPUT_ENABLE=false) but "
+@@ -181,25 +156,10 @@ class MainApp:
+         # Initialize XiaoAI service
+         asyncio.run_coroutine_threadsafe(XiaoAI.init_xiaoai(), self.loop)
+ 
+-        if self._enable_xiaozhi:
+-            # Create XiaoZhi instance
+-            self.xiaozhi = XiaoZhi.instance()
+-            self.xiaozhi.set_app(self)
+-            set_xiaozhi(self.xiaozhi)
+-
+-            # Initialize XiaoZhi connection
+-            asyncio.run_coroutine_threadsafe(self._init_xiaozhi(), self.loop)
+-
+         # Initialize OpenClaw if enabled
+         if self._enable_openclaw:
+             OpenClawManager.initialize_from_config()
+             asyncio.run_coroutine_threadsafe(OpenClawManager.connect(), self.loop)
+-        if self._enable_openai:
+-            OpenAIManager.initialize_from_config()
+-            asyncio.run_coroutine_threadsafe(OpenAIManager.connect(), self.loop)
+-        if self._enable_qwenpaw:
+-            QwenPawManager.initialize_from_config()
+-            asyncio.run_coroutine_threadsafe(QwenPawManager.connect(), self.loop)
+ 
+         # Start API Server if enabled
+         if self._enable_api_server:
+@@ -214,12 +174,12 @@ class MainApp:
+         main_loop_thread.start()
+ 
+         # Start audio services
+-        if (
+-            self._enable_xiaozhi
+-            or self._enable_openclaw
+-            or self._enable_openai
+-            or self._enable_qwenpaw
+-        ):
++        #
++        # IMPORTANT: Home Assistant is config-driven (no enable_* flag), so
++        # it must be checked explicitly here — otherwise enabling only
++        # Home Assistant (OpenClaw disabled) would never start VAD/KWS and
++        # its custom wake words would never fire.
++        if self._enable_openclaw or homeassistant_enabled:
+             # Check audio input via env var (same as Rust), default True
+             # Supports: "true"/"false", "1"/"0", "yes"/"no", "on"/"off"
+             audio_input_enabled = os.environ.get(
+@@ -242,16 +202,9 @@ class MainApp:
+                     == "local_asr"
+                 )
+                 or (
+-                    self._enable_openai
++                    homeassistant_enabled
+                     and self.config.get_app_config(
+-                        "openai.input_mode", "local_asr"
+-                    )
+-                    == "local_asr"
+-                )
+-                or (
+-                    self._enable_qwenpaw
+-                    and self.config.get_app_config(
+-                        "qwenpaw.input_mode", "local_asr"
++                        "homeassistant.input_mode", "xiaoai_asr"
+                     )
+                     == "local_asr"
+                 )
+@@ -302,12 +255,6 @@ class MainApp:
+ 
+             time.sleep(1)
+ 
+-    async def _init_xiaozhi(self):
+-        """Initialize XiaoZhi connection and audio."""
+-        self.device_state = DeviceState.CONNECTING
+-        await self.xiaozhi.connect()
+-        self.xiaozhi.init_audio()
+-
+     def _main_loop(self):
+         """Main application loop."""
+         self.running = True
+@@ -317,10 +264,7 @@ class MainApp:
+                 if event.is_set():
+                     event.clear()
+ 
+-                    if event_type == EventType.AUDIO_INPUT_READY_EVENT:
+-                        if self.xiaozhi:
+-                            self.xiaozhi.handle_input_audio()
+-                    elif event_type == EventType.SCHEDULE_EVENT:
++                    if event_type == EventType.SCHEDULE_EVENT:
+                         self._process_scheduled_tasks()
+ 
+             time.sleep(0.01)
+@@ -369,9 +313,6 @@ class MainApp:
+         self.shutdown_requested = True
+         self.running = False
+ 
+-        if self.xiaozhi:
+-            self.xiaozhi.shutdown()
+-
+         if self.api_server:
+             asyncio.run_coroutine_threadsafe(
+                 self.api_server.stop(), self.loop
+@@ -382,14 +323,6 @@ class MainApp:
+             asyncio.run_coroutine_threadsafe(
+                 OpenClawManager.close(), self.loop
+             )
+-        if OpenAIManager.is_enabled():
+-            asyncio.run_coroutine_threadsafe(
+-                OpenAIManager.close(), self.loop
+-            )
+-        if QwenPawManager.is_enabled():
+-            asyncio.run_coroutine_threadsafe(
+-                QwenPawManager.close(), self.loop
+-            )
+ 
+         if self.loop and self.loop.is_running():
+             self.loop.call_soon_threadsafe(self.loop.stop)
+@@ -402,11 +335,6 @@ class MainApp:
+ 
+     # Public API
+ 
+-    async def send_text(self, text):
+-        """Send text to XiaoZhi."""
+-        if self.xiaozhi and self.xiaozhi.is_connected():
+-            await self.xiaozhi.send_text(text)
+-
+     async def send_to_openclaw(self, text: str, wait_response: bool = False) -> str | None:
+         """Send message to OpenClaw (for skill-based autonomous playback).
+ 
+@@ -449,69 +377,3 @@ class MainApp:
+             session_key: New session key (e.g. "agent:user123:my-app").
+         """
+         OpenClawManager.set_session_key(session_key)
+-
+-    async def send_to_openai(self, text: str, wait_response: bool = False) -> str | None:
+-        """Send message to the OpenAI-compatible service."""
+-        try:
+-            full_text = text
+-            if OpenAIManager._rule_prompt_for_skill:
+-                full_text = text + "\n" + OpenAIManager._rule_prompt_for_skill
+-            return await OpenAIManager.send(full_text, wait_response=wait_response)
+-        except Exception as e:
+-            logger.error(f"[MainApp] 发送消息到 OpenAI 兼容服务失败: {type(e).__name__}: {e}")
+-            return None
+-
+-    async def send_to_openai_and_play_reply(
+-        self,
+-        text: str,
+-        wait_response: bool = False,
+-    ) -> str | None:
+-        """Send message to the OpenAI-compatible service and play the reply."""
+-        try:
+-            full_text = text
+-            if OpenAIManager._rule_prompt:
+-                full_text = text + "\n" + OpenAIManager._rule_prompt
+-            return await OpenAIManager.send_and_play_reply(
+-                full_text,
+-                wait_response=wait_response,
+-            )
+-        except Exception as e:
+-            logger.error(f"[MainApp] 发送消息到 OpenAI 兼容服务失败: {type(e).__name__}: {e}")
+-            return None
+-
+-    def set_openai_session_key(self, session_key: str):
+-        """Override the OpenAI-compatible service session key at runtime."""
+-        OpenAIManager.set_session_key(session_key)
+-
+-    async def send_to_qwenpaw(self, text: str, wait_response: bool = False) -> str | None:
+-        """Send message to QwenPaw."""
+-        try:
+-            full_text = text
+-            if QwenPawManager._rule_prompt_for_skill:
+-                full_text = text + "\n" + QwenPawManager._rule_prompt_for_skill
+-            return await QwenPawManager.send(full_text, wait_response=wait_response)
+-        except Exception as e:
+-            logger.error(f"[MainApp] 发送消息到 QwenPaw 失败: {type(e).__name__}: {e}")
+-            return None
+-
+-    async def send_to_qwenpaw_and_play_reply(
+-        self,
+-        text: str,
+-        wait_response: bool = False,
+-    ) -> str | None:
+-        """Send message to QwenPaw and play the reply."""
+-        try:
+-            full_text = text
+-            if QwenPawManager._rule_prompt:
+-                full_text = text + "\n" + QwenPawManager._rule_prompt
+-            return await QwenPawManager.send_and_play_reply(
+-                full_text,
+-                wait_response=wait_response,
+-            )
+-        except Exception as e:
+-            logger.error(f"[MainApp] 发送消息到 QwenPaw 失败: {type(e).__name__}: {e}")
+-            return None
+-
+-    def set_qwenpaw_session_key(self, session_key: str):
+-        """Override the QwenPaw session key at runtime."""
+-        QwenPawManager.set_session_key(session_key)
+diff --git a/core/external_conversation.py b/core/external_conversation.py
+index c52f2e7..f74e34b 100644
+--- a/core/external_conversation.py
++++ b/core/external_conversation.py
+@@ -4,12 +4,12 @@ After a custom wake word triggers wakeup, this module drives either:
+   - local VAD -> ASR -> backend -> TTS
+   - XiaoAI native ASR -> backend -> TTS
+ 
+-The selected input path runs independently of the XiaoZhi session state
+-machine.
++The selected input path runs independently of the WakeupSessionManager's
++wakeup session state.
+ 
+ Key design decisions:
+   - Uses per-session asyncio.Future objects so it never conflicts with the
+-    XiaoZhi wakeup session state machine.
++    WakeupSessionManager's wakeup session state machine.
+   - Never calls abort_xiaoai() (which would break the FileMonitor).
+   - TTS playback is blocking (awaited), so the next listening round
+     only starts after the response has finished playing.
+@@ -304,7 +304,8 @@ class ExternalConversationController:
+     async def _wait_for_speech(self, vad) -> bytes | None:
+         """Use VAD to detect speech and collect complete utterance.
+ 
+-        Follows the same two-step pattern as the XiaoZhi wakeup session:
++        Follows the same two-step pattern as WakeupSessionManager's wakeup
++        flow:
+           1. resume("speech") → wait for on_speech (voice detected)
+           2. resume("silence") → keep recording → wait for on_silence (user stopped)
+ 
+diff --git a/core/homeassistant_conversation.py b/core/homeassistant_conversation.py
+index cc6d25d..9d5352e 100644
+--- a/core/homeassistant_conversation.py
++++ b/core/homeassistant_conversation.py
+@@ -112,7 +112,8 @@ class HomeAssistantConversationController(
+         """
+         Home Assistant response -> XiaoAI TTS.
+ 
+-        Do not use OpenClaw/OpenAI/QwenPaw TTS.
++        Always uses XiaoAI's native TTS, regardless of what OpenClaw's
++        tts_speaker/doubao TTS config is set to.
+         """
+ 
+         if not response:
+diff --git a/core/openai.py b/core/openai.py
+deleted file mode 100644
+index 192af8b..0000000
+--- a/core/openai.py
++++ /dev/null
+@@ -1,438 +0,0 @@
+-"""OpenAI-compatible service manager.
+-
+-This module talks to any OpenAI-compatible Chat Completions endpoint,
+-including Hermes Agent API server mode.
+-"""
+-
+-import asyncio
+-import uuid
+-from typing import Any
+-
+-import aiohttp
+-
+-import open_xiaoai_server
+-
+-from core.utils.base import get_env
+-from core.utils.config import ConfigManager
+-from core.utils.logger import logger
+-
+-
+-class OpenAIManager:
+-    """Manager for OpenAI-compatible chat backends."""
+-
+-    XIAOAI_TTS_SPEAKER = "xiaoai"
+-
+-    _initialized = False
+-    _reload_listener_registered = False
+-    _enabled = False
+-    _base_url = "http://127.0.0.1:8000/v1"
+-    _api_key = ""
+-    _model = "gpt-4o-mini"
+-    _session_key = "agent:default:open-xiaoai-bridge"
+-    # Optional header used to send session_key to the server (e.g. Hermes'
+-    # "X-Hermes-Session-Key" for long-term memory scoping). Standard OpenAI /
+-    # Ollama / LM Studio ignore the unknown header; set empty to disable.
+-    _session_header = "X-Hermes-Session-Key"
+-    _system_prompt = ""
+-    _temperature: float | None = None
+-    _max_tokens: int | None = None
+-    _timeout = 120
+-    _history_max_messages = 20
+-    _extra_body: dict[str, Any] = {}
+-    _tts_speaker = None
+-    _session_tts_speakers: dict[str, str] = {}
+-    _tts_speed = 1.0
+-    _rule_prompt = ""
+-    _rule_prompt_for_skill = ""
+-    _sessions: dict[str, list[dict[str, str]]] = {}
+-    _response_events: dict[str, asyncio.Future] = {}
+-    _response_texts: dict[str, str] = {}
+-    _response_tts_speakers: dict[str, str | None] = {}
+-    last_error: str | None = None
+-
+-    @classmethod
+-    def initialize_from_config(cls, enabled: bool | None = None):
+-        logger.info("[OpenAI] Initializing from config...")
+-        cls.reload_from_config(enabled=enabled)
+-        cls._initialized = True
+-
+-    @classmethod
+-    def reload_from_config(cls, enabled: bool | None = None):
+-        """Refresh OpenAI settings from config.py."""
+-        config_manager = ConfigManager.instance()
+-        if not cls._reload_listener_registered:
+-            config_manager.add_reload_listener(
+-                lambda _old, _new: cls.reload_from_config()
+-            )
+-            cls._reload_listener_registered = True
+-
+-        config = config_manager.get_app_config("openai", {})
+-
+-        if enabled is not None:
+-            cls._enabled = enabled
+-        else:
+-            env_enabled = get_env("OPENAI_ENABLE")
+-            cls._enabled = (
+-                env_enabled.lower() in ("1", "true", "yes")
+-                if env_enabled is not None
+-                else False
+-            )
+-
+-        cls._base_url = str(config.get("base_url", "http://127.0.0.1:8000/v1")).rstrip("/")
+-        cls._api_key = str(config.get("api_key", "") or "")
+-        cls._model = str(config.get("model", "gpt-4o-mini"))
+-        cls._session_key = str(config.get("session_key", "agent:default:open-xiaoai-bridge"))
+-        cls._session_header = str(config.get("session_header", "X-Hermes-Session-Key") or "").strip()
+-        cls._system_prompt = str(config.get("system_prompt", "") or "")
+-        cls._timeout = int(config.get("response_timeout", 120))
+-        cls._history_max_messages = max(0, int(config.get("history_max_messages", 20)))
+-        cls._temperature = cls._optional_float(config.get("temperature"))
+-        cls._max_tokens = cls._optional_int(config.get("max_tokens"))
+-        cls._extra_body = config.get("extra_body", {})
+-        if not isinstance(cls._extra_body, dict):
+-            cls._extra_body = {}
+-        cls._tts_speaker = config.get("tts_speaker", None)
+-        cls._session_tts_speakers = (
+-            {
+-                str(key): str(value)
+-                for key, value in config.get("session_tts_speakers", {}).items()
+-                if key and value
+-            }
+-            if isinstance(config.get("session_tts_speakers", {}), dict)
+-            else {}
+-        )
+-        cls._tts_speed = float(config.get("tts_speed", 1.0))
+-        cls._rule_prompt = str(config.get("rule_prompt", "") or "")
+-        cls._rule_prompt_for_skill = str(config.get("rule_prompt_for_skill", "") or "")
+-
+-        if cls._enabled:
+-            logger.info(
+-                f"[OpenAI] Enabled, base_url={cls._base_url}, model={cls._model}"
+-            )
+-
+-    @classmethod
+-    def _optional_float(cls, value) -> float | None:
+-        if value is None or value == "":
+-            return None
+-        return float(value)
+-
+-    @classmethod
+-    def _optional_int(cls, value) -> int | None:
+-        if value is None or value == "":
+-            return None
+-        return int(value)
+-
+-    @classmethod
+-    async def connect(cls) -> bool:
+-        """No-op connect hook for parity with WebSocket backends."""
+-        if not cls._initialized:
+-            cls.initialize_from_config()
+-        return cls._enabled
+-
+-    @classmethod
+-    async def close(cls):
+-        """Cancel pending response waiters."""
+-        for waiter in list(cls._response_events.values()):
+-            if not waiter.done():
+-                waiter.cancel()
+-        cls._response_events.clear()
+-        cls._response_texts.clear()
+-        cls._response_tts_speakers.clear()
+-
+-    @classmethod
+-    def is_connected(cls) -> bool:
+-        return cls.is_enabled()
+-
+-    @classmethod
+-    def is_enabled(cls) -> bool:
+-        if not cls._initialized:
+-            cls.initialize_from_config()
+-        return cls._enabled
+-
+-    @classmethod
+-    def set_session_key(cls, session_key: str):
+-        logger.info(
+-            f"[OpenAI] Session key updated: {cls._session_key!r} -> {session_key!r}"
+-        )
+-        cls._session_key = session_key
+-
+-    @classmethod
+-    def reset_session(cls, session_key: str | None = None):
+-        cls._sessions.pop(session_key or cls._session_key, None)
+-
+-    @classmethod
+-    def get_tts_speaker_for_session_key(cls, session_key: str | None = None) -> str | None:
+-        target_session_key = session_key or cls._session_key
+-        return cls._session_tts_speakers.get(target_session_key) or cls._tts_speaker
+-
+-    @classmethod
+-    async def send(cls, text: str, wait_response: bool = False) -> str | None:
+-        run_id = await cls._send_and_track(text)
+-        if run_id is None:
+-            return None
+-        if not wait_response:
+-            asyncio.create_task(cls._wait_response(run_id))
+-            return run_id
+-        try:
+-            return await cls._wait_response(run_id)
+-        finally:
+-            cls._response_tts_speakers.pop(run_id, None)
+-
+-    @classmethod
+-    async def send_and_play_reply(cls, text: str, wait_response: bool = False) -> str | None:
+-        run_id = await cls._send_and_track(text)
+-        if run_id is None:
+-            return None
+-        if not wait_response:
+-            asyncio.create_task(cls._wait_and_play_response(run_id))
+-            return run_id
+-        try:
+-            response_text = await cls._wait_response(run_id)
+-            if response_text:
+-                await cls._play_response_with_tts(
+-                    response_text,
+-                    tts_speaker=cls._response_tts_speakers.get(run_id),
+-                )
+-            return response_text
+-        finally:
+-            cls._response_tts_speakers.pop(run_id, None)
+-
+-    @classmethod
+-    async def _send_and_track(cls, text: str) -> str | None:
+-        if not cls._initialized:
+-            cls.initialize_from_config()
+-        if not cls._enabled:
+-            logger.warning("[OpenAI] send called but backend is disabled")
+-            return None
+-
+-        run_id = str(uuid.uuid4())
+-        loop = asyncio.get_running_loop()
+-        cls._response_events[run_id] = loop.create_future()
+-        cls._response_texts[run_id] = ""
+-        cls._response_tts_speakers[run_id] = cls.get_tts_speaker_for_session_key()
+-        logger.user_speech(text, module=f"OpenAI({cls._session_key})")
+-        asyncio.create_task(cls._run_chat_completion(run_id, text))
+-        return run_id
+-
+-    @classmethod
+-    async def _wait_response(cls, run_id: str) -> str | None:
+-        event = cls._response_events.get(run_id)
+-        if not event:
+-            logger.warning(f"[OpenAI] No event found for run {run_id}")
+-            return None
+-        try:
+-            await asyncio.wait_for(event, timeout=cls._timeout)
+-            return cls._response_texts.pop(run_id, "") or None
+-        except asyncio.TimeoutError:
+-            logger.warning(f"[OpenAI] Timeout waiting for response (runId: {run_id})")
+-            return None
+-        finally:
+-            cls._response_events.pop(run_id, None)
+-            cls._response_texts.pop(run_id, None)
+-
+-    @classmethod
+-    async def _run_chat_completion(cls, run_id: str, text: str):
+-        try:
+-            response_text = await cls._request_chat_completion(text)
+-            if response_text:
+-                cls._response_texts[run_id] = response_text
+-                logger.ai_response(response_text, module=f"OpenAI({cls._session_key})")
+-        except Exception as exc:
+-            cls.last_error = f"{type(exc).__name__}: {exc}"
+-            logger.error(f"[OpenAI] Chat completion failed: {cls.last_error}")
+-        finally:
+-            waiter = cls._response_events.get(run_id)
+-            if waiter and not waiter.done():
+-                waiter.get_loop().call_soon_threadsafe(waiter.set_result, None)
+-
+-    @classmethod
+-    async def _request_chat_completion(cls, text: str) -> str | None:
+-        session_key = cls._session_key
+-        history = cls._sessions.setdefault(session_key, [])
+-        messages = cls._build_messages(history, text)
+-        payload: dict[str, Any] = {
+-            "model": cls._model,
+-            "messages": messages,
+-            "stream": False,
+-            **cls._extra_body,
+-        }
+-        if cls._temperature is not None:
+-            payload["temperature"] = cls._temperature
+-        if cls._max_tokens is not None:
+-            payload["max_tokens"] = cls._max_tokens
+-
+-        headers = cls._headers()
+-
+-        async with aiohttp.ClientSession(
+-            timeout=aiohttp.ClientTimeout(total=cls._timeout)
+-        ) as session:
+-            async with session.post(
+-                cls._chat_completions_url(),
+-                json=payload,
+-                headers=headers,
+-            ) as response:
+-                body = await response.json(content_type=None)
+-                if response.status >= 400:
+-                    message = body.get("error", body) if isinstance(body, dict) else body
+-                    raise RuntimeError(f"HTTP {response.status}: {message}")
+-
+-        response_text = cls._extract_response_text(body)
+-        if response_text:
+-            cls._append_history(history, text, response_text)
+-        return response_text
+-
+-    @classmethod
+-    def _headers(cls) -> dict[str, str]:
+-        headers = {"Content-Type": "application/json"}
+-        if cls._api_key:
+-            headers["Authorization"] = f"Bearer {cls._api_key}"
+-        # Scope server-side long-term memory to this session (e.g. Hermes'
+-        # X-Hermes-Session-Key). chat/completions stays stateless — the
+-        # messages array is still the source of turn history — so this does
+-        # not duplicate context.
+-        if cls._session_header and cls._session_key:
+-            headers[cls._session_header] = cls._session_key
+-        return headers
+-
+-    @classmethod
+-    def _chat_completions_url(cls) -> str:
+-        if cls._base_url.endswith("/chat/completions"):
+-            return cls._base_url
+-        return cls._base_url.rstrip("/") + "/chat/completions"
+-
+-    @classmethod
+-    def _build_messages(cls, history: list[dict[str, str]], text: str) -> list[dict[str, str]]:
+-        messages: list[dict[str, str]] = []
+-        if cls._system_prompt:
+-            messages.append({"role": "system", "content": cls._system_prompt})
+-        messages.extend(history[-cls._history_max_messages :] if cls._history_max_messages else [])
+-        messages.append({"role": "user", "content": text})
+-        return messages
+-
+-    @classmethod
+-    def _append_history(cls, history: list[dict[str, str]], text: str, response_text: str):
+-        if cls._history_max_messages <= 0:
+-            return
+-        history.extend(
+-            [
+-                {"role": "user", "content": text},
+-                {"role": "assistant", "content": response_text},
+-            ]
+-        )
+-        if len(history) > cls._history_max_messages:
+-            del history[: len(history) - cls._history_max_messages]
+-
+-    @classmethod
+-    def _extract_response_text(cls, body: Any) -> str | None:
+-        if not isinstance(body, dict):
+-            return None
+-        choices = body.get("choices")
+-        if not choices:
+-            return None
+-        first = choices[0]
+-        if not isinstance(first, dict):
+-            return None
+-        message = first.get("message")
+-        if isinstance(message, dict):
+-            content = message.get("content")
+-            if isinstance(content, str):
+-                return content.strip()
+-            if isinstance(content, list):
+-                parts = [
+-                    item.get("text", "")
+-                    for item in content
+-                    if isinstance(item, dict) and item.get("type") == "text"
+-                ]
+-                return "".join(parts).strip() or None
+-        text = first.get("text")
+-        return text.strip() if isinstance(text, str) else None
+-
+-    @classmethod
+-    async def _wait_and_play_response(cls, run_id: str):
+-        try:
+-            response_text = await cls._wait_response(run_id)
+-            if response_text:
+-                await cls._play_response_with_tts(
+-                    response_text,
+-                    tts_speaker=cls._response_tts_speakers.get(run_id),
+-                )
+-            else:
+-                logger.warning(f"[OpenAI] No response text received for run {run_id}")
+-        finally:
+-            cls._response_tts_speakers.pop(run_id, None)
+-
+-    @classmethod
+-    async def _play_response_with_tts(
+-        cls,
+-        text: str,
+-        tts_speaker: str | None = None,
+-        playback_token: int | None = None,
+-    ):
+-        """Synthesize text and play it through the speaker."""
+-        try:
+-            from core.ref import get_speaker
+-
+-            resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
+-            if resolved_tts_speaker == cls.XIAOAI_TTS_SPEAKER:
+-                speaker = get_speaker()
+-                if speaker:
+-                    await speaker.play(text=text, blocking=True)
+-                return
+-
+-            from core.services.tts.doubao import DoubaoTTS
+-
+-            tts_config = ConfigManager.instance().get_app_config("tts.doubao", {})
+-            app_id = tts_config.get("app_id")
+-            access_key = tts_config.get("access_key")
+-            if not app_id or not access_key:
+-                logger.warning(
+-                    "[OpenAI] Doubao TTS credentials not configured, falling back to xiaoai native tts"
+-                )
+-                speaker = get_speaker()
+-                if speaker:
+-                    await speaker.play(text=text, blocking=True)
+-                return
+-
+-            speaker_id = resolved_tts_speaker or tts_config.get(
+-                "default_speaker", "zh_female_xiaohe_uranus_bigtts"
+-            )
+-            tts = DoubaoTTS(
+-                app_id=app_id,
+-                access_key=access_key,
+-                speaker=speaker_id,
+-            )
+-            resolved_format = tts.resolve_audio_format(text)
+-            if tts_config.get("stream", False):
+-                await open_xiaoai_server.tts_stream_play(
+-                    text,
+-                    app_id=app_id,
+-                    access_key=access_key,
+-                    resource_id=tts.resource_id,
+-                    speaker=speaker_id,
+-                    speed=cls._tts_speed,
+-                    format=resolved_format,
+-                    sample_rate=24000,
+-                    playback_token=playback_token,
+-                )
+-            else:
+-                await open_xiaoai_server.tts_play(
+-                    text,
+-                    app_id=app_id,
+-                    access_key=access_key,
+-                    resource_id=tts.resource_id,
+-                    speaker=speaker_id,
+-                    speed=cls._tts_speed,
+-                    format=resolved_format,
+-                    sample_rate=24000,
+-                    playback_token=playback_token,
+-                )
+-        except Exception as exc:
+-            logger.error(f"[OpenAI] Error playing response with TTS: {exc}")
+-            try:
+-                from core.ref import get_speaker
+-
+-                speaker = get_speaker()
+-                if speaker:
+-                    await speaker.play(text=text, blocking=True)
+-            except Exception as fallback_error:
+-                logger.error(f"[OpenAI] Fallback TTS also failed: {fallback_error}")
+diff --git a/core/openai_conversation.py b/core/openai_conversation.py
+deleted file mode 100644
+index d7b2ab5..0000000
+--- a/core/openai_conversation.py
++++ /dev/null
+@@ -1,14 +0,0 @@
+-"""OpenAI-compatible continuous conversation controller."""
+-
+-from core.openai import OpenAIManager
+-from core.external_conversation import ExternalConversationController
+-
+-
+-class OpenAIConversationController(ExternalConversationController):
+-    """Manages multi-turn conversation for OpenAI-compatible services."""
+-
+-    CONFIG_PREFIX = "openai"
+-    BACKEND_NAME = "OpenAI"
+-    LOG_MODULE = "OpenAI Conv"
+-    WAKEUP_SOURCE = "openai"
+-    MANAGER = OpenAIManager
+diff --git a/core/qwenpaw.py b/core/qwenpaw.py
+deleted file mode 100644
+index b462640..0000000
+--- a/core/qwenpaw.py
++++ /dev/null
+@@ -1,456 +0,0 @@
+-"""QwenPaw service manager.
+-
+-This module talks to a running QwenPaw application through its HTTP
+-console task API and exposes the same minimal interface used by the
+-external conversation controller.
+-"""
+-
+-import asyncio
+-import uuid
+-from typing import Any
+-
+-import aiohttp
+-
+-import open_xiaoai_server
+-
+-from core.utils.base import get_env
+-from core.utils.config import ConfigManager
+-from core.utils.logger import logger
+-
+-
+-class QwenPawManager:
+-    """Manager for QwenPaw HTTP chat backend."""
+-
+-    XIAOAI_TTS_SPEAKER = "xiaoai"
+-
+-    _initialized = False
+-    _reload_listener_registered = False
+-    _enabled = False
+-    _base_url = "http://127.0.0.1:8088"
+-    _agent_id = "default"
+-    _user_id = "open-xiaoai-bridge"
+-    _session_key = "agent:default:open-xiaoai-bridge"
+-    _send_path = "/api/console/chat/task"
+-    _task_status_path = "/api/console/chat/task/{task_id}"
+-    _response_timeout = 120
+-    _poll_interval = 0.5
+-    _tts_speaker = None
+-    _session_tts_speakers: dict[str, str] = {}
+-    _tts_speed = 1.0
+-    _rule_prompt = ""
+-    _rule_prompt_for_skill = ""
+-    _auth_token = ""
+-    _auth_header = "Authorization"
+-    _auth_scheme = "Bearer"
+-    _response_events: dict[str, asyncio.Future] = {}
+-    _response_texts: dict[str, str] = {}
+-    _response_tts_speakers: dict[str, str | None] = {}
+-    last_error: str | None = None
+-
+-    @classmethod
+-    def initialize_from_config(cls, enabled: bool | None = None):
+-        logger.info("[QwenPaw] Initializing from config...")
+-        cls.reload_from_config(enabled=enabled)
+-        cls._initialized = True
+-
+-    @classmethod
+-    def reload_from_config(cls, enabled: bool | None = None):
+-        """Refresh QwenPaw settings from config.py."""
+-        config_manager = ConfigManager.instance()
+-        if not cls._reload_listener_registered:
+-            config_manager.add_reload_listener(
+-                lambda _old, _new: cls.reload_from_config()
+-            )
+-            cls._reload_listener_registered = True
+-
+-        config = config_manager.get_app_config("qwenpaw", {})
+-
+-        if enabled is not None:
+-            cls._enabled = enabled
+-        else:
+-            env_enabled = get_env("QWENPAW_ENABLE")
+-            cls._enabled = (
+-                env_enabled.lower() in ("1", "true", "yes")
+-                if env_enabled is not None
+-                else False
+-            )
+-
+-        cls._base_url = str(config.get("base_url", "http://127.0.0.1:8088")).rstrip("/")
+-        cls._agent_id = str(config.get("agent_id", "default") or "default")
+-        cls._user_id = str(config.get("user_id", "open-xiaoai-bridge") or "open-xiaoai-bridge")
+-        cls._session_key = str(config.get("session_key", "agent:default:open-xiaoai-bridge") or "agent:default:open-xiaoai-bridge")
+-        cls._send_path = str(config.get("send_path", "/api/console/chat/task") or "/api/console/chat/task")
+-        cls._task_status_path = str(
+-            config.get("task_status_path", "/api/console/chat/task/{task_id}")
+-            or "/api/console/chat/task/{task_id}"
+-        )
+-        cls._response_timeout = int(config.get("response_timeout", 120))
+-        cls._poll_interval = max(0.1, float(config.get("poll_interval", 0.5)))
+-        cls._tts_speaker = config.get("tts_speaker", None)
+-        cls._session_tts_speakers = (
+-            {
+-                str(key): str(value)
+-                for key, value in config.get("session_tts_speakers", {}).items()
+-                if key and value
+-            }
+-            if isinstance(config.get("session_tts_speakers", {}), dict)
+-            else {}
+-        )
+-        cls._tts_speed = float(config.get("tts_speed", 1.0))
+-        cls._rule_prompt = str(config.get("rule_prompt", "") or "")
+-        cls._rule_prompt_for_skill = str(config.get("rule_prompt_for_skill", "") or "")
+-        cls._auth_token = str(config.get("auth_token", "") or "")
+-        cls._auth_header = str(config.get("auth_header", "Authorization")).strip() or "Authorization"
+-        cls._auth_scheme = str(config.get("auth_scheme", "Bearer")).strip()
+-
+-        if cls._enabled:
+-            logger.info(
+-                f"[QwenPaw] Enabled, base_url={cls._base_url}, agent_id={cls._agent_id}"
+-            )
+-
+-    @classmethod
+-    async def connect(cls) -> bool:
+-        """No-op connect hook for parity with other backends."""
+-        if not cls._initialized:
+-            cls.initialize_from_config()
+-        return cls._enabled
+-
+-    @classmethod
+-    async def close(cls):
+-        """Cancel pending response waiters."""
+-        for waiter in list(cls._response_events.values()):
+-            if not waiter.done():
+-                waiter.cancel()
+-        cls._response_events.clear()
+-        cls._response_texts.clear()
+-        cls._response_tts_speakers.clear()
+-
+-    @classmethod
+-    def is_connected(cls) -> bool:
+-        return cls.is_enabled()
+-
+-    @classmethod
+-    def is_enabled(cls) -> bool:
+-        if not cls._initialized:
+-            cls.initialize_from_config()
+-        return cls._enabled
+-
+-    @classmethod
+-    def set_session_key(cls, session_key: str):
+-        logger.info(
+-            f"[QwenPaw] Session key updated: {cls._session_key!r} -> {session_key!r}"
+-        )
+-        cls._session_key = session_key
+-
+-    @classmethod
+-    def get_tts_speaker_for_session_key(cls, session_key: str | None = None) -> str | None:
+-        target_session_key = session_key or cls._session_key
+-        return cls._session_tts_speakers.get(target_session_key) or cls._tts_speaker
+-
+-    @classmethod
+-    def _parse_session_key(cls, session_key: str | None = None) -> tuple[str, str]:
+-        """Split a session_key into (agent_id, session_id).
+-
+-        The session_key uses the unified agent:<agentId>:<sessionId> format.
+-        The first two segments are the marker and agentId; everything after
+-        the second colon is the session id (which may itself contain colons).
+-        Falls back to the configured agent_id and the raw key when the value
+-        does not follow the convention, for backward compatibility.
+-        """
+-        key = session_key or cls._session_key or ""
+-        parts = key.split(":", 2)
+-        if len(parts) == 3 and parts[0] == "agent" and parts[1]:
+-            return parts[1], parts[2]
+-        return cls._agent_id, key
+-
+-    @classmethod
+-    async def send(cls, text: str, wait_response: bool = False) -> str | None:
+-        run_id = await cls._send_and_track(text)
+-        if run_id is None:
+-            return None
+-        if not wait_response:
+-            asyncio.create_task(cls._wait_response(run_id))
+-            return run_id
+-        try:
+-            return await cls._wait_response(run_id)
+-        finally:
+-            cls._response_tts_speakers.pop(run_id, None)
+-
+-    @classmethod
+-    async def send_and_play_reply(cls, text: str, wait_response: bool = False) -> str | None:
+-        run_id = await cls._send_and_track(text)
+-        if run_id is None:
+-            return None
+-        if not wait_response:
+-            asyncio.create_task(cls._wait_and_play_response(run_id))
+-            return run_id
+-        try:
+-            response_text = await cls._wait_response(run_id)
+-            if response_text:
+-                await cls._play_response_with_tts(
+-                    response_text,
+-                    tts_speaker=cls._response_tts_speakers.get(run_id),
+-                )
+-            return response_text
+-        finally:
+-            cls._response_tts_speakers.pop(run_id, None)
+-
+-    @classmethod
+-    async def _send_and_track(cls, text: str) -> str | None:
+-        if not cls._initialized:
+-            cls.initialize_from_config()
+-        if not cls._enabled:
+-            logger.warning("[QwenPaw] send called but backend is disabled")
+-            return None
+-
+-        run_id = str(uuid.uuid4())
+-        loop = asyncio.get_running_loop()
+-        cls._response_events[run_id] = loop.create_future()
+-        cls._response_texts[run_id] = ""
+-        cls._response_tts_speakers[run_id] = cls.get_tts_speaker_for_session_key()
+-        logger.user_speech(text, module=f"QwenPaw({cls._session_key})")
+-        asyncio.create_task(cls._run_qwenpaw_task(run_id, text))
+-        return run_id
+-
+-    @classmethod
+-    async def _wait_response(cls, run_id: str) -> str | None:
+-        event = cls._response_events.get(run_id)
+-        if not event:
+-            logger.warning(f"[QwenPaw] No event found for run {run_id}")
+-            return None
+-        try:
+-            await asyncio.wait_for(event, timeout=cls._response_timeout)
+-            return cls._response_texts.pop(run_id, "") or None
+-        except asyncio.TimeoutError:
+-            logger.warning(f"[QwenPaw] Timeout waiting for response (runId: {run_id})")
+-            return None
+-        finally:
+-            cls._response_events.pop(run_id, None)
+-            cls._response_texts.pop(run_id, None)
+-
+-    @classmethod
+-    async def _run_qwenpaw_task(cls, run_id: str, text: str):
+-        try:
+-            response_text = await cls._request_qwenpaw(text)
+-            if response_text:
+-                cls._response_texts[run_id] = response_text
+-                logger.ai_response(response_text, module=f"QwenPaw({cls._session_key})")
+-        except Exception as exc:
+-            cls.last_error = f"{type(exc).__name__}: {exc}"
+-            logger.error(f"[QwenPaw] Request failed: {cls.last_error}")
+-        finally:
+-            waiter = cls._response_events.get(run_id)
+-            if waiter and not waiter.done():
+-                waiter.get_loop().call_soon_threadsafe(waiter.set_result, None)
+-
+-    @classmethod
+-    async def _request_qwenpaw(cls, text: str) -> str | None:
+-        timeout = aiohttp.ClientTimeout(total=cls._response_timeout)
+-        async with aiohttp.ClientSession(timeout=timeout) as session:
+-            async with session.post(
+-                cls._url_for_path(cls._send_path),
+-                json=cls._build_payload(text),
+-                headers=cls._headers(),
+-            ) as response:
+-                body = await response.json(content_type=None)
+-                if response.status >= 400:
+-                    raise RuntimeError(f"HTTP {response.status}: {body}")
+-
+-            task_id = body.get("task_id") if isinstance(body, dict) else None
+-            if not task_id:
+-                return cls._extract_response_text(body)
+-
+-            return await cls._poll_task_result(session, str(task_id))
+-
+-    @classmethod
+-    def _build_payload(cls, text: str) -> dict[str, Any]:
+-        _agent_id, session_id = cls._parse_session_key()
+-        return {
+-            "input": [
+-                {
+-                    "role": "user",
+-                    "content": [{"type": "text", "text": text}],
+-                }
+-            ],
+-            "session_id": session_id,
+-            "user_id": cls._user_id,
+-            "stream": True,
+-            "timeout": cls._response_timeout,
+-        }
+-
+-    @classmethod
+-    def _headers(cls) -> dict[str, str]:
+-        headers = {"Content-Type": "application/json"}
+-        agent_id, _session_id = cls._parse_session_key()
+-        if agent_id:
+-            headers["X-Agent-Id"] = agent_id
+-        if cls._auth_token:
+-            if cls._auth_scheme:
+-                headers[cls._auth_header] = f"{cls._auth_scheme} {cls._auth_token}"
+-            else:
+-                headers[cls._auth_header] = cls._auth_token
+-        return headers
+-
+-    @classmethod
+-    async def _poll_task_result(
+-        cls,
+-        session: aiohttp.ClientSession,
+-        task_id: str,
+-    ) -> str | None:
+-        deadline = asyncio.get_running_loop().time() + cls._response_timeout
+-        while True:
+-            if asyncio.get_running_loop().time() >= deadline:
+-                raise asyncio.TimeoutError(f"QwenPaw task timeout: {task_id}")
+-
+-            async with session.get(
+-                cls._url_for_path(cls._task_status_path.format(task_id=task_id)),
+-                headers=cls._headers(),
+-            ) as response:
+-                body = await response.json(content_type=None)
+-                if response.status >= 400:
+-                    raise RuntimeError(f"HTTP {response.status}: {body}")
+-
+-            status = body.get("status") if isinstance(body, dict) else None
+-            if status == "finished":
+-                result = body.get("result") if isinstance(body, dict) else body
+-                return cls._extract_response_text(result)
+-            if status in {"failed", "cancelled"}:
+-                raise RuntimeError(f"QwenPaw task {status}: {body}")
+-            await asyncio.sleep(cls._poll_interval)
+-
+-    @classmethod
+-    def _url_for_path(cls, path: str) -> str:
+-        if path.startswith("http://") or path.startswith("https://"):
+-            return path
+-        return cls._base_url + (path if path.startswith("/") else f"/{path}")
+-
+-    @classmethod
+-    def _extract_response_text(cls, body: Any) -> str | None:
+-        texts: list[str] = []
+-        cls._collect_response_texts(body, texts)
+-        return "".join(texts).strip() or None
+-
+-    @classmethod
+-    def _collect_response_texts(cls, value: Any, texts: list[str]):
+-        if isinstance(value, str):
+-            return
+-        if isinstance(value, list):
+-            for item in value:
+-                cls._collect_response_texts(item, texts)
+-            return
+-        if not isinstance(value, dict):
+-            return
+-
+-        value_type = value.get("type")
+-        if value_type in {"turn_usage", "reasoning", "progress"}:
+-            return
+-
+-        role = value.get("role")
+-        if role and role not in {"assistant", "system"}:
+-            return
+-
+-        content = value.get("content")
+-        if content is not None:
+-            cls._collect_response_texts(content, texts)
+-
+-        text = value.get("text")
+-        if isinstance(text, str) and text.strip():
+-            texts.append(text)
+-
+-        output = value.get("output")
+-        if output is not None:
+-            cls._collect_response_texts(output, texts)
+-
+-        result = value.get("result")
+-        if result is not None:
+-            cls._collect_response_texts(result, texts)
+-
+-    @classmethod
+-    async def _wait_and_play_response(cls, run_id: str):
+-        try:
+-            response_text = await cls._wait_response(run_id)
+-            if response_text:
+-                await cls._play_response_with_tts(
+-                    response_text,
+-                    tts_speaker=cls._response_tts_speakers.get(run_id),
+-                )
+-            else:
+-                logger.warning(f"[QwenPaw] No response text received for run {run_id}")
+-        finally:
+-            cls._response_tts_speakers.pop(run_id, None)
+-
+-    @classmethod
+-    async def _play_response_with_tts(
+-        cls,
+-        text: str,
+-        tts_speaker: str | None = None,
+-        playback_token: int | None = None,
+-    ):
+-        """Synthesize text and play it through the speaker."""
+-        try:
+-            from core.ref import get_speaker
+-
+-            resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
+-            if resolved_tts_speaker == cls.XIAOAI_TTS_SPEAKER:
+-                speaker = get_speaker()
+-                if speaker:
+-                    await speaker.play(text=text, blocking=True)
+-                return
+-
+-            from core.services.tts.doubao import DoubaoTTS
+-
+-            tts_config = ConfigManager.instance().get_app_config("tts.doubao", {})
+-            app_id = tts_config.get("app_id")
+-            access_key = tts_config.get("access_key")
+-            if not app_id or not access_key:
+-                logger.warning(
+-                    "[QwenPaw] Doubao TTS credentials not configured, falling back to xiaoai native tts"
+-                )
+-                speaker = get_speaker()
+-                if speaker:
+-                    await speaker.play(text=text, blocking=True)
+-                return
+-
+-            speaker_id = resolved_tts_speaker or tts_config.get(
+-                "default_speaker", "zh_female_xiaohe_uranus_bigtts"
+-            )
+-            tts = DoubaoTTS(
+-                app_id=app_id,
+-                access_key=access_key,
+-                speaker=speaker_id,
+-            )
+-            resolved_format = tts.resolve_audio_format(text)
+-            if tts_config.get("stream", False):
+-                await open_xiaoai_server.tts_stream_play(
+-                    text,
+-                    app_id=app_id,
+-                    access_key=access_key,
+-                    resource_id=tts.resource_id,
+-                    speaker=speaker_id,
+-                    speed=cls._tts_speed,
+-                    format=resolved_format,
+-                    sample_rate=24000,
+-                    playback_token=playback_token,
+-                )
+-            else:
+-                await open_xiaoai_server.tts_play(
+-                    text,
+-                    app_id=app_id,
+-                    access_key=access_key,
+-                    resource_id=tts.resource_id,
+-                    speaker=speaker_id,
+-                    speed=cls._tts_speed,
+-                    format=resolved_format,
+-                    sample_rate=24000,
+-                    playback_token=playback_token,
+-                )
+-        except Exception as exc:
+-            logger.error(f"[QwenPaw] Error playing response with TTS: {exc}")
+-            try:
+-                from core.ref import get_speaker
+-
+-                speaker = get_speaker()
+-                if speaker:
+-                    await speaker.play(text=text, blocking=True)
+-            except Exception as fallback_error:
+-                logger.error(f"[QwenPaw] Fallback TTS also failed: {fallback_error}")
+diff --git a/core/qwenpaw_conversation.py b/core/qwenpaw_conversation.py
+deleted file mode 100644
+index a258b0d..0000000
+--- a/core/qwenpaw_conversation.py
++++ /dev/null
+@@ -1,14 +0,0 @@
+-"""QwenPaw continuous conversation controller."""
+-
+-from core.external_conversation import ExternalConversationController
+-from core.qwenpaw import QwenPawManager
+-
+-
+-class QwenPawConversationController(ExternalConversationController):
+-    """Continuous conversation mode for QwenPaw."""
+-
+-    CONFIG_PREFIX = "qwenpaw"
+-    BACKEND_NAME = "QwenPaw"
+-    LOG_MODULE = "QwenPaw Conv"
+-    WAKEUP_SOURCE = "qwenpaw"
+-    MANAGER = QwenPawManager
+diff --git a/core/ref.py b/core/ref.py
+index 60ad294..b4526bd 100644
+--- a/core/ref.py
++++ b/core/ref.py
+@@ -13,14 +13,6 @@ def get_app() -> Any:
+     return GLOBAL_STATES.get("app")
+ 
+ 
+-def set_xiaozhi(xiaozhi: Any):
+-    GLOBAL_STATES["xiaozhi"] = xiaozhi
+-
+-
+-def get_xiaozhi() -> Any:
+-    return GLOBAL_STATES.get("xiaozhi")
+-
+-
+ def set_xiaoai(xiaoai: Any):
+     GLOBAL_STATES["xiaoai"] = xiaoai
+ 
+@@ -37,14 +29,6 @@ def get_vad() -> Any:
+     return GLOBAL_STATES.get("vad")
+ 
+ 
+-def set_audio_codec(opus_encoder: Any):
+-    GLOBAL_STATES["opus_encoder"] = opus_encoder
+-
+-
+-def get_audio_codec() -> Any:
+-    return GLOBAL_STATES.get("opus_encoder")
+-
+-
+ def get_speaker() -> Any:
+     return GLOBAL_STATES.get("speaker")
+ 
+@@ -61,9 +45,4 @@ def get_kws() -> Any:
+     return GLOBAL_STATES.get("kws")
+ 
+ 
+-def set_speech_frames(speech_frames: Any):
+-    GLOBAL_STATES["speech_frames"] = speech_frames
+-
+ 
+-def get_speech_frames() -> Any:
+-    return GLOBAL_STATES.get("speech_frames")
+diff --git a/core/services/audio/codec.py b/core/services/audio/codec.py
+deleted file mode 100644
+index 48fc9be..0000000
+--- a/core/services/audio/codec.py
++++ /dev/null
+@@ -1,192 +0,0 @@
+-import open_xiaoai_server
+-
+-from core.ref import (
+-    get_speech_frames,
+-    get_xiaozhi,
+-    set_audio_codec,
+-    set_speech_frames,
+-)
+-from core.services.audio.stream import MyAudio
+-from core.services.protocols.typing import AudioConfig
+-
+-
+-class AudioCodec:
+-    """音频编解码器类，处理音频的录制和播放"""
+-
+-    def __init__(self):
+-        """初始化音频编解码器"""
+-        self.audio = None
+-        self.input_stream = None
+-        self.output_stream = None
+-        self.opus_encoder = None
+-        self.opus_decoder = None
+-        self._is_closing = False
+-
+-        self._initialize_audio()
+-        set_audio_codec(self)
+-
+-    def _get_server_audio_params(self):
+-        """Get server audio parameters from XiaoZhi protocol, with defaults."""
+-        xiaozhi = get_xiaozhi()
+-        if xiaozhi and xiaozhi.protocol:
+-            return xiaozhi.protocol.server_sample_rate, xiaozhi.protocol.server_frame_size
+-        # Default values matching WebSocketProtocol defaults
+-        default_sample_rate = 24000
+-        default_frame_duration = 60
+-        return default_sample_rate, int(default_sample_rate * (default_frame_duration / 1000))
+-
+-    def _initialize_audio(self):
+-        """初始化音频设备和编解码器"""
+-        self.audio = MyAudio.create()
+-        server_sample_rate, server_frame_size = self._get_server_audio_params()
+-
+-        # 初始化音频输入流
+-        self.input_stream = self.audio.open(
+-            format=AudioConfig.FORMAT,
+-            channels=AudioConfig.CHANNELS,
+-            rate=AudioConfig.SAMPLE_RATE,
+-            input=True,
+-            frames_per_buffer=AudioConfig.FRAME_SIZE,
+-            input_device_index=MyAudio.get_input_device_index(self.audio),
+-        )
+-
+-        # 初始化音频输出流
+-        self.output_stream = self.audio.open(
+-            output=True,
+-            format=AudioConfig.FORMAT,
+-            channels=AudioConfig.CHANNELS,
+-            rate=server_sample_rate,
+-            frames_per_buffer=server_frame_size,
+-            output_device_index=MyAudio.get_output_device_index(self.audio),
+-        )
+-
+-        # 初始化Opus编码器
+-        self.opus_encoder = open_xiaoai_server.OpusEncoder(
+-            sample_rate=AudioConfig.SAMPLE_RATE,
+-            channels=AudioConfig.CHANNELS,
+-        )
+-
+-        # 初始化Opus解码器
+-        self.opus_decoder = open_xiaoai_server.OpusDecoder(
+-            sample_rate=server_sample_rate,
+-            channels=AudioConfig.CHANNELS,
+-        )
+-        self.temp_frames = bytes([])
+-
+-    def read_audio(self):
+-        """读取音频输入数据并编码"""
+-        try:
+-            speech_frames = get_speech_frames()
+-
+-            # 加入语音片段
+-            if speech_frames:
+-                self.temp_frames = speech_frames
+-                set_speech_frames([])
+-
+-            # 读取音频输入数据
+-            data = self.input_stream.read(
+-                num_frames=None,
+-                exception_on_overflow=False,
+-            )
+-            if not data:
+-                return None
+-
+-            self.temp_frames += data
+-            if len(self.temp_frames) < AudioConfig.FRAME_SIZE * 2:
+-                return None
+-
+-            opus_frames, remain_frames = self.encode_audio(self.temp_frames)
+-            self.temp_frames = remain_frames
+-            return opus_frames
+-        except Exception:
+-            return None
+-
+-    def write_audio(self, opus_data):
+-        """解码并播放"""
+-        try:
+-            pcm_data = self.decode_audio(opus_data)  # 解码
+-            self.output_stream.write(pcm_data)  # 播放
+-        except Exception:
+-            pass
+-
+-    def decode_audio(self, opus_data):
+-        """解码音频数据"""
+-        _, server_frame_size = self._get_server_audio_params()
+-        return self.opus_decoder.decode(
+-            opus_data,
+-            frame_size=server_frame_size,
+-            decode_fec=False,
+-        )
+-
+-    def encode_audio(self, buffer: bytes, frame_size=AudioConfig.FRAME_SIZE):
+-        """编码音频数据"""
+-        opus_frames = []
+-        remain_frames = bytes([])
+-        try:
+-            for i in range(0, len(buffer), frame_size * 2):
+-                chunk = buffer[i : i + frame_size * 2]
+-                if len(chunk) < frame_size * 2:
+-                    remain_frames = chunk
+-                    break
+-                opus_frame = self.opus_encoder.encode(chunk, frame_size)
+-                opus_frames.append(opus_frame)
+-            return opus_frames, remain_frames
+-        except Exception:
+-            return None, remain_frames
+-
+-    def start_streams(self):
+-        """启动音频流"""
+-        if not self.input_stream.is_active():
+-            self.input_stream.start_stream()
+-        if not self.output_stream.is_active():
+-            self.output_stream.start_stream()
+-
+-    def stop_streams(self):
+-        """停止音频流"""
+-        if self.input_stream.is_active():
+-            self.input_stream.stop_stream()
+-        if self.output_stream.is_active():
+-            self.output_stream.stop_stream()
+-
+-    def close(self):
+-        """关闭音频编解码器，确保资源正确释放"""
+-        if self._is_closing:  # 防止重复关闭
+-            return
+-        self._is_closing = True
+-
+-        try:
+-            # 关闭输入流
+-            if self.input_stream:
+-                try:
+-                    if self.input_stream.is_active():
+-                        self.input_stream.stop_stream()
+-                    self.input_stream.close()
+-                except Exception:
+-                    pass
+-                self.input_stream = None
+-
+-            # 关闭输出流
+-            if self.output_stream:
+-                try:
+-                    if self.output_stream.is_active():
+-                        self.output_stream.stop_stream()
+-                    self.output_stream.close()
+-                except Exception:
+-                    pass
+-                self.output_stream = None
+-
+-            # 关闭 PyAudio 实例
+-            if self.audio:
+-                try:
+-                    self.audio.terminate()
+-                except Exception:
+-                    pass
+-                self.audio = None
+-
+-            # 清理编解码器
+-            self.opus_encoder = None
+-            self.opus_decoder = None
+-        except Exception:
+-            pass
+-        finally:
+-            self._is_closing = False
+diff --git a/core/services/audio/kws/__init__.py b/core/services/audio/kws/__init__.py
+index bf68f17..263c4e2 100644
+--- a/core/services/audio/kws/__init__.py
++++ b/core/services/audio/kws/__init__.py
+@@ -3,11 +3,11 @@ import os
+ import threading
+ import time
+ 
+-from core.ref import get_app, get_xiaoai, get_xiaozhi, set_kws
++from core.ref import get_app, get_xiaoai, set_kws
+ from core.services.audio.kws.sherpa import SherpaOnnx
+ from core.services.audio.stream import MyAudio
+ from core.services.audio.vad.silero import Silero
+-from core.services.protocols.typing import AudioConfig, DeviceState
++from core.services.protocols.typing import AudioConfig
+ from core.utils.config import ConfigManager
+ from core.utils.logger import logger
+ from core.wakeup_session import EventManager
+@@ -88,15 +88,9 @@ class _KWS:
+                 continue
+ 
+             # 在说话和监听状态时，暂停 KWS
+-            xiaozhi = get_xiaozhi()
+-            if (
+-                not frames
+-                or self.paused
+-                or (
+-                    xiaozhi and xiaozhi.device_state
+-                    in [DeviceState.LISTENING, DeviceState.SPEAKING]
+-                )
+-            ):
++            # （OpenClaw/HomeAssistant 通过 EventManager 的 kws.pause()/resume()
++            #  控制暂停，这里不再依赖已移除的 XiaoZhi device_state）
++            if not frames or self.paused:
+                 time.sleep(0.01)
+                 continue
+ 
+diff --git a/core/services/audio/kws/keywords.py b/core/services/audio/kws/keywords.py
+index 9874a61..724319c 100644
+--- a/core/services/audio/kws/keywords.py
++++ b/core/services/audio/kws/keywords.py
+@@ -22,31 +22,31 @@ from core.utils.logger import logger
+ 
+ 
+ def should_generate_keywords():
+-    """Return whether keyword generation should run."""
++    """Return whether keyword generation should run.
++
++    OpenClaw is gated by an env var (OPENCLAW_ENABLE/OPENCLAW_ENABLED).
++    Home Assistant has no env var — it is enabled purely via
++    config.py's homeassistant.enabled — so it must be checked
++    directly against the config here, or a "Home Assistant only"
++    setup would silently never get a keywords.txt generated and its
++    custom wake words would never fire.
++    """
+     import os
+ 
+-    xiaozhi_enabled = os.environ.get("XIAOZHI_ENABLE", "").lower() in ("1", "true", "yes")
+     # 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
+     openclaw_env = os.environ.get("OPENCLAW_ENABLE") or os.environ.get("OPENCLAW_ENABLED") or ""
+     openclaw_enabled = openclaw_env.lower() in ("1", "true", "yes")
+-    openai_enabled = os.environ.get("OPENAI_ENABLE", "").lower() in (
+-        "1",
+-        "true",
+-        "yes",
+-    )
+-    qwenpaw_enabled = os.environ.get("QWENPAW_ENABLE", "").lower() in (
+-        "1",
+-        "true",
+-        "yes",
++
++    homeassistant_enabled = bool(
++        ConfigManager.instance().get_app_config("homeassistant.enabled", False)
+     )
+ 
+-    if (
+-        not xiaozhi_enabled
+-        and not openclaw_enabled
+-        and not openai_enabled
+-        and not qwenpaw_enabled
+-    ):
+-        return False, "XIAOZHI_ENABLE, OPENCLAW_ENABLE/OPENCLAW_ENABLED, OPENAI_ENABLE and QWENPAW_ENABLE are all disabled"
++    if not openclaw_enabled and not homeassistant_enabled:
++        return (
++            False,
++            "OPENCLAW_ENABLE/OPENCLAW_ENABLED is disabled and "
++            "homeassistant.enabled is False in config.py",
++        )
+ 
+     return True, ""
+ 
+diff --git a/core/services/protocols/protocol.py b/core/services/protocols/protocol.py
+deleted file mode 100644
+index 12b2f14..0000000
+--- a/core/services/protocols/protocol.py
++++ /dev/null
+@@ -1,80 +0,0 @@
+-import json
+-
+-from core.services.protocols.typing import ListeningMode
+-
+-
+-class Protocol:
+-    def __init__(self):
+-        self.session_id = ""
+-        self.on_incoming_json = None
+-        self.on_incoming_audio = None
+-        self.on_audio_channel_opened = None
+-        self.on_audio_channel_closed = None
+-        self.on_network_error = None
+-
+-    def on_incoming_json(self, callback):
+-        """设置JSON消息接收回调函数"""
+-        self.on_incoming_json = callback
+-
+-    def on_incoming_audio(self, callback):
+-        """设置音频数据接收回调函数"""
+-        self.on_incoming_audio = callback
+-
+-    def on_audio_channel_opened(self, callback):
+-        """设置音频通道打开回调函数"""
+-        self.on_audio_channel_opened = callback
+-
+-    def on_audio_channel_closed(self, callback):
+-        """设置音频通道关闭回调函数"""
+-        self.on_audio_channel_closed = callback
+-
+-    def on_network_error(self, callback):
+-        """设置网络错误回调函数"""
+-        self.on_network_error = callback
+-
+-    async def send_text(self, message):
+-        """发送文本消息的抽象方法，需要在子类中实现"""
+-        raise NotImplementedError("send_text方法必须由子类实现")
+-
+-    async def send_abort_speaking(self, reason):
+-        """发送中止语音的消息"""
+-        message = {"session_id": self.session_id, "type": reason}
+-        await self.send_text(json.dumps(message))
+-
+-    async def send_start_listening(self, mode):
+-        """发送开始监听的消息"""
+-        mode_map = {
+-            ListeningMode.ALWAYS_ON: "realtime",
+-            ListeningMode.AUTO_STOP: "auto",
+-            ListeningMode.MANUAL: "manual",
+-        }
+-        message = {
+-            "session_id": self.session_id,
+-            "type": "listen",
+-            "state": "start",
+-            "mode": mode_map[mode],
+-        }
+-        await self.send_text(json.dumps(message))
+-
+-    async def send_stop_listening(self):
+-        """发送停止监听的消息"""
+-        message = {"session_id": self.session_id, "type": "listen", "state": "stop"}
+-        await self.send_text(json.dumps(message))
+-
+-    async def send_iot_descriptors(self, descriptors):
+-        """发送物联网设备描述信息"""
+-        message = {
+-            "session_id": self.session_id,
+-            "type": "iot",
+-            "descriptors": json.loads(descriptors),
+-        }
+-        await self.send_text(json.dumps(message))
+-
+-    async def send_iot_states(self, states):
+-        """发送物联网设备状态信息"""
+-        message = {
+-            "session_id": self.session_id,
+-            "type": "iot",
+-            "states": json.loads(states),
+-        }
+-        await self.send_text(json.dumps(message))
+diff --git a/core/services/protocols/websocket_protocol.py b/core/services/protocols/websocket_protocol.py
+deleted file mode 100644
+index 0fdabaf..0000000
+--- a/core/services/protocols/websocket_protocol.py
++++ /dev/null
+@@ -1,260 +0,0 @@
+-import asyncio
+-import inspect
+-import json
+-
+-import websockets
+-
+-from core.ref import get_xiaozhi
+-from core.services.protocols.protocol import Protocol
+-from core.services.protocols.typing import DeviceState
+-from core.utils.config import ConfigManager
+-from core.utils.logger import logger
+-
+-
+-class WebsocketProtocol(Protocol):
+-    def __init__(self):
+-        super().__init__()
+-        # 获取配置管理器实例
+-        self.config = ConfigManager.instance()
+-        self.websocket = None
+-        self.server_sample_rate = 24000
+-        self.server_frame_duration = 60
+-        self.server_frame_size = int(
+-            self.server_sample_rate * (self.server_frame_duration / 1000)
+-        )
+-        self.connected = False
+-        self.hello_received = None  # 初始化时先设为 None
+-        self._handler_task = None
+-        self.WEBSOCKET_URL = self.config.get_config("NETWORK.WEBSOCKET_URL")
+-        self.WEBSOCKET_ACCESS_TOKEN = self.config.get_config(
+-            "NETWORK.WEBSOCKET_ACCESS_TOKEN"
+-        )
+-        self.CLIENT_ID = self.config.get_client_id()
+-        self.DEVICE_ID = self.config.get_device_id()
+-
+-    async def _close_websocket(self):
+-        if self.websocket:
+-            try:
+-                await self.websocket.close()
+-                self.websocket = None
+-                self.connected = False
+-            except Exception:
+-                pass
+-
+-    async def _invoke_callback(self, callback, *args):
+-        """Run sync or async callbacks transparently."""
+-        if not callback:
+-            return None
+-
+-        result = callback(*args)
+-        if inspect.isawaitable(result):
+-            return await result
+-        return result
+-
+-    async def connect(self) -> bool:
+-        """连接到WebSocket服务器"""
+-        try:
+-            await self._close_websocket()
+-            self.WEBSOCKET_URL = self.config.get_config("NETWORK.WEBSOCKET_URL")
+-            self.WEBSOCKET_ACCESS_TOKEN = self.config.get_config(
+-                "NETWORK.WEBSOCKET_ACCESS_TOKEN"
+-            )
+-            self.CLIENT_ID = self.config.get_client_id()
+-            self.DEVICE_ID = self.config.get_device_id()
+-
+-            # 在连接时创建 Event，确保在正确的事件循环中
+-            self.hello_received = asyncio.Event()
+-
+-            # 配置连接
+-            headers = {
+-                "Authorization": f"Bearer {self.WEBSOCKET_ACCESS_TOKEN}",
+-                "Protocol-Version": "1",
+-                "Device-Id": self.DEVICE_ID,  # 获取设备MAC地址
+-                "Client-Id": self.CLIENT_ID,
+-            }
+-
+-            # 建立WebSocket连接
+-            self.websocket = await websockets.connect(
+-                uri=self.WEBSOCKET_URL, additional_headers=headers
+-            )
+-
+-            # Cancel stale handler task from previous connection
+-            if self._handler_task and not self._handler_task.done():
+-                self._handler_task.cancel()
+-
+-            # 启动消息处理循环
+-            self._handler_task = asyncio.create_task(self._message_handler())
+-
+-            # 发送客户端hello消息
+-            hello_message = {
+-                "type": "hello",
+-                "version": 1,
+-                "transport": "websocket",
+-                "audio_params": {
+-                    "format": "opus",
+-                    "sample_rate": 16000,
+-                    "channels": 1,
+-                    "frame_duration": 60,
+-                },
+-            }
+-            await self.send_text(json.dumps(hello_message))
+-
+-            # 等待服务器hello响应
+-            try:
+-                await asyncio.wait_for(self.hello_received.wait(), timeout=10.0)
+-                self.connected = True
+-                logger.info(f"[xiaozhi-esp32-server] 连接 {self.WEBSOCKET_URL} 成功")
+-                return True
+-            except asyncio.TimeoutError:
+-                if self.on_network_error:
+-                    self.on_network_error("等待响应超时")
+-                return False
+-        except Exception as e:
+-            if self.on_network_error:
+-                self.on_network_error(f"无法连接服务: {str(e)}")
+-            return False
+-
+-    async def _message_handler(self):
+-        """处理接收到的WebSocket消息"""
+-        try:
+-            async for message in self.websocket:
+-                if isinstance(message, str):
+-                    try:
+-                        data = json.loads(message)
+-                        session_id = data.get("session_id")
+-                        if session_id and session_id != self.session_id:
+-                            self.session_id = session_id
+-                            logger.info(
+-                                f"[xiaozhi-esp32-server] Updated session_id: {session_id}"
+-                            )
+-                        msg_type = data.get("type")
+-                        if msg_type == "hello":
+-                            await self._handle_server_hello(data)
+-                        else:
+-                            if self.on_incoming_json:
+-                                self.on_incoming_json(data)
+-                    except json.JSONDecodeError:
+-                        pass
+-                elif self.on_incoming_audio:
+-                    self.on_incoming_audio(message)
+-        except Exception as exc:
+-            logger.error(
+-                f"[xiaozhi-esp32-server] Message handler stopped: {type(exc).__name__}: {exc}"
+-            )
+-            self.connected = False
+-            if self.on_audio_channel_closed:
+-                await self._invoke_callback(self.on_audio_channel_closed)
+-
+-    async def send_audio(self, frames: list[bytes]):
+-        """发送音频数据"""
+-        if not self.is_audio_channel_opened():  # 使用已有的 is_connected 方法
+-            return
+-
+-        try:
+-            for frame in frames:
+-                await self.websocket.send(frame)
+-        except Exception as exc:
+-            logger.error(
+-                f"[xiaozhi-esp32-server] Failed to send audio: {type(exc).__name__}: {exc}"
+-            )
+-
+-    async def send_text(self, message: str):
+-        """发送文本消息"""
+-        if self.websocket:
+-            try:
+-                await self.websocket.send(message)
+-            except Exception as e:
+-                raise e
+-
+-    def is_audio_channel_opened(self) -> bool:
+-        """检查音频通道是否打开"""
+-        return self.websocket is not None and self.connected
+-
+-    _is_heartbeat_running = False
+-
+-    async def open_audio_channel(self):
+-        if not self._is_heartbeat_running:
+-            self._is_heartbeat_running = True
+-            asyncio.create_task(self.heartbeat())
+-        await self.connect()
+-
+-    async def _handle_server_hello(self, data: dict):
+-        """处理服务器的 hello 消息
+-
+-        解析服务器返回的 hello 消息，设置相关参数并通知音频通道已打开
+-
+-        Args:
+-            data: 服务器返回的 hello 消息数据
+-        """
+-        try:
+-            # 验证传输方式
+-            transport = data.get("transport")
+-            if not transport or transport != "websocket":
+-                return
+-
+-            # TODO 使用默认的 24k 采样率
+-            # xiaozhi-esp32-server 返回的参数是 16k 采样率，但实际用的是 24k 采样率
+-
+-            # 获取音频参数
+-            # audio_params = data.get("audio_params")
+-            # if audio_params:
+-            #     # 获取服务器的采样率
+-            #     sample_rate = audio_params.get("sample_rate")
+-            #     if sample_rate:
+-            #         self.server_sample_rate = sample_rate
+-            #     frame_duration = audio_params.get("frame_duration")
+-            #     if frame_duration:
+-            #         self.server_frame_duration = frame_duration
+-            #     self.server_frame_size = int(
+-            #         self.server_sample_rate * (self.server_frame_duration / 1000)
+-            #     )
+-
+-            # 设置 hello 接收事件
+-            self.hello_received.set()
+-
+-            # 通知音频通道已打开
+-            if self.on_audio_channel_opened:
+-                await self._invoke_callback(self.on_audio_channel_opened)
+-
+-        except Exception as e:
+-            if self.on_network_error:
+-                self.on_network_error(f"处理服务器响应失败: {str(e)}")
+-
+-    _reconnect_attempts = 0
+-
+-    async def close_audio_channel(self):
+-        """关闭音频通道"""
+-        if self.websocket:
+-            try:
+-                await self.websocket.close()
+-                self.websocket = None
+-                self.connected = False
+-                if self.on_audio_channel_closed:
+-                    await self._invoke_callback(self.on_audio_channel_closed)
+-            except Exception:
+-                pass
+-
+-        self._reconnect_attempts += 1
+-        delay = min(5 * (2 ** (self._reconnect_attempts - 1)), 60)
+-        logger.info(
+-            f"[xiaozhi-esp32-server] {self.WEBSOCKET_URL} 通道被关闭, "
+-            f"{delay}s 后尝试重连 (第 {self._reconnect_attempts} 次)..."
+-        )
+-        await asyncio.sleep(delay)
+-        success = await self.connect()
+-        if success:
+-            self._reconnect_attempts = 0
+-
+-    async def heartbeat(self):
+-        while True:
+-            if self.websocket and get_xiaozhi().device_state == DeviceState.IDLE:
+-                try:
+-                    await self.websocket.ping()
+-                except Exception:
+-                    logger.error(
+-                        "发送心跳失败，准备重连",
+-                        module="xiaozhi-esp32-server",
+-                    )
+-                    # 发送心跳失败，重新连接
+-                    await self.open_audio_channel()
+-            await asyncio.sleep(1)
+diff --git a/core/utils/config.py b/core/utils/config.py
+index 97252ac..81d5b8b 100644
+--- a/core/utils/config.py
++++ b/core/utils/config.py
+@@ -1,22 +1,19 @@
+-import re
+-import socket
+ import threading
+-import uuid
+ from pathlib import Path
+-from typing import Any, Callable, Optional
+-
+-import requests
++from typing import Any, Callable
+ 
+ from core.utils.config_loader import (
+     ensure_config_module_loaded,
+     get_config_path,
+     load_config_module,
+ )
+-from core.utils.file import read_file, write_file
+ 
+ 
+ class ConfigManager:
+-    """配置管理器 - 单例模式"""
++    """配置管理器 - 单例模式
++
++    负责加载 config.py 中的 APP_CONFIG，并支持热重载与变更通知。
++    """
+ 
+     _instance = None
+     _lock = threading.Lock()
+@@ -40,17 +37,6 @@ class ConfigManager:
+         ensure_config_module_loaded()
+         self._app_config = self._load_app_config()
+ 
+-        self._config = {
+-            "CLIENT_ID": None,
+-            "DEVICE_ID": self.get_app_config("xiaozhi.DEVICE_ID"),
+-            "NETWORK": self.get_app_config("xiaozhi", {}),
+-            "MQTT_INFO": None,
+-        }
+-
+-        self._initialize_client_id()
+-        self._initialize_device_id()
+-        self._initialize_mqtt_info()
+-
+     def _load_app_config(self) -> dict[str, Any]:
+         """加载 config.py 中的 APP_CONFIG。"""
+         module = ensure_config_module_loaded()
+@@ -97,10 +83,6 @@ class ConfigManager:
+             previous_config = self._app_config
+             self._app_config = next_config
+ 
+-            self._config["DEVICE_ID"] = self.get_app_config("xiaozhi.DEVICE_ID")
+-            self._config["NETWORK"] = self.get_app_config("xiaozhi", {})
+-            self._initialize_device_id()
+-
+             listeners = list(self._reload_listeners)
+ 
+         for listener in listeners:
+@@ -111,62 +93,6 @@ class ConfigManager:
+ 
+         return True
+ 
+-    def get_client_id(self) -> str:
+-        """获取客户端ID"""
+-        with self._state_lock:
+-            return self._config["CLIENT_ID"]
+-
+-    def get_device_id(self) -> Optional[str]:
+-        """获取设备ID"""
+-        with self._state_lock:
+-            return self._config.get("DEVICE_ID")
+-
+-    def get_network_config(self) -> dict:
+-        """获取网络配置"""
+-        with self._state_lock:
+-            return self._config["NETWORK"]
+-
+-    def get_config(self, path: str, default: Any = None) -> Any:
+-        """
+-        通过路径获取配置值
+-        """
+-        with self._state_lock:
+-            try:
+-                value = self._config
+-                for key in path.split("."):
+-                    value = value[key]
+-                return value
+-            except (KeyError, TypeError):
+-                return default
+-
+-    def update_config(self, path: str, value: Any) -> bool:
+-        """
+-        更新特定配置项
+-        """
+-        with self._state_lock:
+-            try:
+-                current = self._config
+-                *parts, last = path.split(".")
+-                for part in parts:
+-                    current = current.setdefault(part, {})
+-                current[last] = value
+-                return True
+-            except Exception:
+-                return False
+-
+-    def update_config_file(self, path: str, value: Any):
+-        """
+-        更新 config.py 文件中的特定配置项
+-        """
+-        write_file(
+-            "config.py",
+-            re.sub(
+-                r'"{}"\s*:\s*"[^"]*"'.format(path),
+-                f'"{path}": "{value}"',
+-                read_file("config.py"),
+-            ),
+-        )
+-
+     @classmethod
+     def instance(cls):
+         """获取配置管理器实例（线程安全）"""
+@@ -174,123 +100,3 @@ class ConfigManager:
+             if cls._instance is None:
+                 cls._instance = cls()
+         return cls._instance
+-
+-    def get_mac_address(self):
+-        mac = uuid.UUID(int=uuid.getnode()).hex[-12:]
+-        return ":".join([mac[i : i + 2] for i in range(0, 12, 2)])
+-
+-    def generate_uuid(self) -> str:
+-        return str(uuid.uuid4())
+-
+-    def get_local_ip(self):
+-        try:
+-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+-            s.connect(("8.8.8.8", 80))
+-            ip = s.getsockname()[0]
+-            s.close()
+-            return ip
+-        except Exception:
+-            return "127.0.0.1"
+-
+-    def _initialize_client_id(self):
+-        """确保存在客户端ID"""
+-        if not self._config["CLIENT_ID"]:
+-            client_id = self.generate_uuid()
+-            self.update_config("CLIENT_ID", client_id)
+-
+-    def _initialize_device_id(self):
+-        """确保存在设备ID"""
+-        if self._config["DEVICE_ID"]:
+-            # 检查设备 ID 是否符合 MAC 地址格式(如 a6:85:b4:9c:09:66)
+-            mac_pattern = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$")
+-            if not mac_pattern.match(self._config["DEVICE_ID"]):
+-                self._config["DEVICE_ID"] = None
+-
+-        if not self._config["DEVICE_ID"]:
+-            try:
+-                device_hash = self.get_mac_address()
+-                self.update_config("DEVICE_ID", device_hash)
+-                self.update_config_file("DEVICE_ID", device_hash)
+-            except Exception:
+-                pass
+-
+-    def refresh_mqtt_info(self):
+-        """刷新 MQTT 信息"""
+-        if not self._config["MQTT_INFO"]:
+-            self._initialize_mqtt_info()
+-
+-    def _initialize_mqtt_info(self):
+-        try:
+-            mqtt_info = self._get_ota_version()
+-            if mqtt_info:
+-                self.update_config("MQTT_INFO", mqtt_info)
+-                return mqtt_info
+-            else:
+-                return self.get_config("MQTT_INFO")
+-        except Exception:
+-            return self.get_config("MQTT_INFO")
+-
+-    def _get_ota_version(self):
+-        """获取OTA服务器的MQTT信息"""
+-        MAC_ADDR = self.get_device_id()
+-        OTA_URL = self.get_config("NETWORK.OTA_URL")
+-        headers = {
+-            "Activation-Version": "1",
+-            "Device-Id": MAC_ADDR,
+-            "Content-Type": "application/json",
+-            "Accept-Language": "zh-CN",
+-        }
+-
+-        # 构建设备信息 payload
+-        payload = {
+-            "mac_address": MAC_ADDR,
+-            "board": {
+-                "type": "lc-esp32-s3",
+-                "name": "立创ESP32-S3开发板",
+-                "features": ["wifi", "ble", "psram", "octal_flash"],
+-                "ip": self.get_local_ip(),
+-                "mac": MAC_ADDR,
+-            },
+-            "application": {
+-                "name": "xiaozhi",
+-                "version": "1.6.0",
+-                "compile_time": "2025-4-16T12:00:00Z",
+-                "idf_version": "v5.3.2",
+-            },
+-            "psram_size": 8388608,  # 8MB PSRAM
+-            "minimum_free_heap_size": 7265024,  # 最小可用堆内存
+-            "chip_model_name": "esp32s3",  # 芯片型号
+-            "chip_info": {
+-                "model": 9,  # ESP32-S3
+-                "cores": 2,
+-                "revision": 0,  # 芯片版本修订
+-                "features": 20,  # WiFi + BLE + PSRAM
+-            },
+-            "partition_table": [],
+-            "ota": {"label": "factory"},
+-        }
+-
+-        try:
+-            # 发送请求到OTA服务器
+-            response = requests.post(
+-                OTA_URL,
+-                headers=headers,
+-                json=payload,
+-                timeout=10,
+-            )
+-
+-            # 检查HTTP状态码
+-            if response.status_code != 200:
+-                raise ValueError(f"OTA服务器返回错误状态码: {response.status_code}")
+-
+-            # 解析JSON数据
+-            response_data = response.json()
+-
+-            if "mqtt" in response_data:
+-                return response_data["mqtt"]
+-            else:
+-                raise ValueError("OTA服务器返回的数据无效，请检查服务器状态或MAC地址！")
+-        except requests.Timeout:
+-            raise ValueError("OTA请求超时！请稍后重试。")
+-        except requests.RequestException:
+-            raise ValueError("无法连接到OTA服务器，请检查网络连接！")
+diff --git a/core/wakeup_session.py b/core/wakeup_session.py
+index 5f291e5..de0bf73 100644
+--- a/core/wakeup_session.py
++++ b/core/wakeup_session.py
+@@ -4,15 +4,13 @@ from core.ref import (
+     get_app,
+     get_kws,
+     get_speaker,
+-    get_xiaozhi,
+ )
+-from core.services.protocols.typing import AbortReason
+ from core.utils.config import ConfigManager
+ from core.utils.logger import logger
+ 
+ 
+ class WakeupSessionManager:
+-    """Dispatches wakeup events to XiaoZhi or external backend controllers."""
++    """Dispatches wakeup events to the OpenClaw / Home Assistant controllers."""
+ 
+     def __init__(self):
+         self.config = ConfigManager.instance()
+@@ -24,20 +22,6 @@ class WakeupSessionManager:
+         self._openclaw_controller = None
+         self._openclaw_task: asyncio.Task | None = None
+ 
+-        # =====================================================
+-        # OpenAI
+-        # =====================================================
+-
+-        self._openai_controller = None
+-        self._openai_task: asyncio.Task | None = None
+-
+-        # =====================================================
+-        # QwenPaw
+-        # =====================================================
+-
+-        self._qwenpaw_controller = None
+-        self._qwenpaw_task: asyncio.Task | None = None
+-
+         # =====================================================
+         # Home Assistant
+         # =====================================================
+@@ -45,12 +29,6 @@ class WakeupSessionManager:
+         self._homeassistant_controller = None
+         self._homeassistant_task: asyncio.Task | None = None
+ 
+-        # =====================================================
+-        # XiaoZhi
+-        # =====================================================
+-
+-        self._xiaozhi_future: asyncio.Future | None = None
+-
+     # =========================================================
+     # Event loop
+     # =========================================================
+@@ -99,23 +77,6 @@ class WakeupSessionManager:
+ 
+         loop = self._get_loop()
+ 
+-        # =====================================================
+-        # XiaoZhi
+-        # =====================================================
+-
+-        if (
+-            self._xiaozhi_future
+-            and not self._xiaozhi_future.done()
+-        ):
+-            self._xiaozhi_future.cancel()
+-
+-        self._xiaozhi_future = None
+-
+-        xiaozhi = get_xiaozhi()
+-
+-        if xiaozhi:
+-            xiaozhi.stop_wakeup_session()
+-
+         # =====================================================
+         # OpenClaw
+         # =====================================================
+@@ -134,42 +95,6 @@ class WakeupSessionManager:
+                 self._openclaw_task.cancel
+             )
+ 
+-        # =====================================================
+-        # OpenAI
+-        # =====================================================
+-
+-        if (
+-            self._openai_controller
+-            and self._openai_controller.is_active()
+-        ):
+-            self._openai_controller.stop()
+-
+-        if (
+-            self._openai_task
+-            and not self._openai_task.done()
+-        ):
+-            loop.call_soon_threadsafe(
+-                self._openai_task.cancel
+-            )
+-
+-        # =====================================================
+-        # QwenPaw
+-        # =====================================================
+-
+-        if (
+-            self._qwenpaw_controller
+-            and self._qwenpaw_controller.is_active()
+-        ):
+-            self._qwenpaw_controller.stop()
+-
+-        if (
+-            self._qwenpaw_task
+-            and not self._qwenpaw_task.done()
+-        ):
+-            loop.call_soon_threadsafe(
+-                self._qwenpaw_task.cancel
+-            )
+-
+         # =====================================================
+         # Home Assistant
+         # =====================================================
+@@ -201,40 +126,6 @@ class WakeupSessionManager:
+ 
+         XiaoAI.stop_conversation()
+ 
+-    # =========================================================
+-    # XiaoZhi wakeup
+-    # =========================================================
+-
+-    def on_wakeup(self):
+-        logger.info(
+-            "[Wakeup] Wakeup session started"
+-        )
+-
+-        xiaozhi = get_xiaozhi()
+-
+-        if xiaozhi:
+-            xiaozhi._is_first_round = True
+-
+-            future = asyncio.run_coroutine_threadsafe(
+-                xiaozhi.start_wakeup_session(),
+-                self._get_loop(),
+-            )
+-
+-            self._xiaozhi_future = future
+-
+-            def _clear_future(
+-                done_future,
+-            ):
+-                if (
+-                    self._xiaozhi_future
+-                    is done_future
+-                ):
+-                    self._xiaozhi_future = None
+-
+-            future.add_done_callback(
+-                _clear_future
+-            )
+-
+     # =========================================================
+     # Speech
+     # =========================================================
+@@ -323,48 +214,6 @@ class WakeupSessionManager:
+             if consumed:
+                 return True
+ 
+-        # =====================================================
+-        # OpenAI
+-        # =====================================================
+-
+-        if (
+-            self._openai_controller
+-            and self._openai_controller.is_active()
+-        ):
+-            consumed = (
+-                self._openai_controller
+-                .consume_xiaoai_recognize_result(
+-                    dialog_id=dialog_id,
+-                    text=text,
+-                    is_final=is_final,
+-                    is_vad_begin=is_vad_begin,
+-                )
+-            )
+-
+-            if consumed:
+-                return True
+-
+-        # =====================================================
+-        # QwenPaw
+-        # =====================================================
+-
+-        if (
+-            self._qwenpaw_controller
+-            and self._qwenpaw_controller.is_active()
+-        ):
+-            consumed = (
+-                self._qwenpaw_controller
+-                .consume_xiaoai_recognize_result(
+-                    dialog_id=dialog_id,
+-                    text=text,
+-                    is_final=is_final,
+-                    is_vad_begin=is_vad_begin,
+-                )
+-            )
+-
+-            if consumed:
+-                return True
+-
+         return False
+ 
+     # =========================================================
+@@ -411,46 +260,6 @@ class WakeupSessionManager:
+             default_session_key
+         )
+ 
+-        # -----------------------------------------------------
+-
+-        from core.openai import (
+-            OpenAIManager,
+-        )
+-
+-        default_openai_session_key = (
+-            self.config.get_app_config(
+-                "openai",
+-                {},
+-            ).get(
+-                "session_key",
+-                "agent:default:open-xiaoai-bridge",
+-            )
+-        )
+-
+-        OpenAIManager._session_key = (
+-            default_openai_session_key
+-        )
+-
+-        # -----------------------------------------------------
+-
+-        from core.qwenpaw import (
+-            QwenPawManager,
+-        )
+-
+-        default_qwenpaw_session_key = (
+-            self.config.get_app_config(
+-                "qwenpaw",
+-                {},
+-            ).get(
+-                "session_key",
+-                "agent:default:open-xiaoai-bridge",
+-            )
+-        )
+-
+-        QwenPawManager._session_key = (
+-            default_qwenpaw_session_key
+-        )
+-
+         # -----------------------------------------------------
+         # Home Assistant session key
+         # -----------------------------------------------------
+@@ -505,21 +314,12 @@ class WakeupSessionManager:
+         if should_wakeup == "openclaw":
+             await self._start_openclaw_conversation()
+ 
+-        elif should_wakeup == "openai":
+-            await self._start_openai_conversation()
+-
+-        elif should_wakeup == "qwenpaw":
+-            await self._start_qwenpaw_conversation()
+-
+         elif should_wakeup == "homeassistant":
+             await self._start_homeassistant_conversation(
+                 source=source,
+                 wake_word=text,
+             )
+ 
+-        elif should_wakeup == "xiaozhi":
+-            self.on_wakeup()
+-
+     # =========================================================
+     # OpenClaw
+     # =========================================================
+@@ -567,100 +367,6 @@ class WakeupSessionManager:
+             if kws:
+                 kws.resume()
+ 
+-    # =========================================================
+-    # OpenAI
+-    # =========================================================
+-
+-    async def _start_openai_conversation(
+-        self,
+-    ):
+-        from core.openai_conversation import (
+-            OpenAIConversationController,
+-        )
+-
+-        kws = get_kws()
+-
+-        if kws:
+-            kws.pause()
+-
+-        try:
+-            self._openai_controller = (
+-                OpenAIConversationController()
+-            )
+-
+-            self._openai_task = (
+-                asyncio.create_task(
+-                    self._openai_controller.start()
+-                )
+-            )
+-
+-            await self._openai_task
+-
+-        except asyncio.CancelledError:
+-            pass
+-
+-        except Exception as exc:
+-            logger.error(
+-                "[Wakeup] OpenAI conversation failed: "
+-                f"{type(exc).__name__}: {exc}",
+-                module="Wakeup",
+-            )
+-
+-        finally:
+-            self._openai_controller = None
+-
+-            self._openai_task = None
+-
+-            if kws:
+-                kws.resume()
+-
+-    # =========================================================
+-    # QwenPaw
+-    # =========================================================
+-
+-    async def _start_qwenpaw_conversation(
+-        self,
+-    ):
+-        from core.qwenpaw_conversation import (
+-            QwenPawConversationController,
+-        )
+-
+-        kws = get_kws()
+-
+-        if kws:
+-            kws.pause()
+-
+-        try:
+-            self._qwenpaw_controller = (
+-                QwenPawConversationController()
+-            )
+-
+-            self._qwenpaw_task = (
+-                asyncio.create_task(
+-                    self._qwenpaw_controller.start()
+-                )
+-            )
+-
+-            await self._qwenpaw_task
+-
+-        except asyncio.CancelledError:
+-            pass
+-
+-        except Exception as exc:
+-            logger.error(
+-                "[Wakeup] QwenPaw conversation failed: "
+-                f"{type(exc).__name__}: {exc}",
+-                module="Wakeup",
+-            )
+-
+-        finally:
+-            self._qwenpaw_controller = None
+-
+-            self._qwenpaw_task = None
+-
+-            if kws:
+-                kws.resume()
+-
+     # =========================================================
+     # Home Assistant
+     # =========================================================
+@@ -720,31 +426,12 @@ class WakeupSessionManager:
+     async def reset_all_sessions(self):
+         from core.xiaoai import XiaoAI
+ 
+-        from core.ref import get_xiaozhi
+-
+         # =====================================================
+         # Stop XiaoAI conversation
+         # =====================================================
+ 
+         XiaoAI.stop_conversation()
+ 
+-        # =====================================================
+-        # Stop XiaoZhi
+-        # =====================================================
+-
+-        xiaozhi = get_xiaozhi()
+-
+-        if (
+-            xiaozhi
+-            and xiaozhi.is_connected()
+-        ):
+-            try:
+-                await xiaozhi.send_abort_speaking(
+-                    AbortReason.ABORT
+-                )
+-            except Exception:
+-                pass
+-
+         # =====================================================
+         # OpenClaw
+         # =====================================================
+@@ -755,26 +442,6 @@ class WakeupSessionManager:
+         ):
+             self._openclaw_controller.stop()
+ 
+-        # =====================================================
+-        # OpenAI
+-        # =====================================================
+-
+-        if (
+-            self._openai_controller
+-            and self._openai_controller.is_active()
+-        ):
+-            self._openai_controller.stop()
+-
+-        # =====================================================
+-        # QwenPaw
+-        # =====================================================
+-
+-        if (
+-            self._qwenpaw_controller
+-            and self._qwenpaw_controller.is_active()
+-        ):
+-            self._qwenpaw_controller.stop()
+-
+         # =====================================================
+         # Home Assistant
+         # =====================================================
+@@ -795,8 +462,9 @@ class WakeupSessionManager:
+             "[Wakeup] All sessions reset"
+         )
+ 
+-        # =========================================================
++
++# =========================================================
+ # Global event manager
+ # =========================================================
+ 
+-EventManager = WakeupSessionManager()
+\ No newline at end of file
++EventManager = WakeupSessionManager()
+diff --git a/core/xiaozhi.py b/core/xiaozhi.py
+deleted file mode 100644
+index 0a53e49..0000000
+--- a/core/xiaozhi.py
++++ /dev/null
+@@ -1,514 +0,0 @@
+-"""XiaoZhi protocol client - handles WebSocket connection to XiaoZhi server.
+-
+-This module is responsible for:
+-- Connecting to XiaoZhi WebSocket server
+-- Sending/receiving audio and text messages
+-- Protocol-level message handling
+-- Audio codec management and stream control
+-- JSON message parsing (TTS/STT/LLM)
+-- Wakeup session: VAD-driven listen/stop cycle
+-
+-The main application flow is managed by app.py.
+-"""
+-
+-import asyncio
+-import json
+-import os
+-import threading
+-
+-import open_xiaoai_server
+-
+-from core.ref import get_audio_codec, get_speaker, get_vad, set_speech_frames
+-from core.services.protocols.protocol import Protocol
+-from core.services.protocols.typing import (
+-    AbortReason,
+-    DeviceState,
+-    ListeningMode,
+-)
+-from core.utils.config import ConfigManager
+-from core.utils.logger import logger
+-
+-_NOTIFY_SOUND_PATH = os.path.join(
+-    os.path.dirname(os.path.abspath(__file__)),
+-    "assets", "sounds", "tts_notify.mp3",
+-)
+-
+-
+-def _load_notify_sound() -> bytes | None:
+-    """Decode tts_notify.mp3 to PCM at startup."""
+-    if not os.path.isfile(_NOTIFY_SOUND_PATH):
+-        return None
+-    try:
+-        with open(_NOTIFY_SOUND_PATH, "rb") as f:
+-            mp3_data = f.read()
+-        return open_xiaoai_server.decode_audio(mp3_data, format="mp3", sample_rate=24000)
+-    except Exception:
+-        return None
+-
+-
+-_NOTIFY_PCM = _load_notify_sound()
+-
+-
+-class XiaoZhi:
+-    """XiaoZhi protocol client."""
+-
+-    _instance = None
+-
+-    @classmethod
+-    def instance(cls):
+-        """Get singleton instance."""
+-        if cls._instance is None:
+-            cls._instance = XiaoZhi()
+-        return cls._instance
+-
+-    def __init__(self):
+-        """Initialize XiaoZhi client."""
+-        if XiaoZhi._instance is not None:
+-            raise Exception("XiaoZhi is singleton, use instance() to get instance")
+-        XiaoZhi._instance = self
+-
+-        self.config = ConfigManager.instance()
+-
+-        # Protocol
+-        self.protocol = None
+-
+-        # References (set by MainApp)
+-        self._app = None
+-        self._audio_codec = None
+-
+-        # Wakeup session state
+-        self._session_loop: asyncio.AbstractEventLoop | None = None
+-        self._vad_future: asyncio.Future | None = None
+-        self._tts_stop_future: asyncio.Future | None = None
+-        self._is_first_round = False
+-
+-    def set_app(self, app):
+-        """Set reference to main app."""
+-        self._app = app
+-
+-    def set_audio_codec(self, codec):
+-        """Set audio codec reference."""
+-        self._audio_codec = codec
+-
+-    @property
+-    def device_state(self):
+-        """Proxy device state from app."""
+-        if self._app:
+-            return self._app.device_state
+-        return None
+-
+-    def set_device_state(self, state):
+-        """Set device state and manage audio streams accordingly."""
+-        if not self._app:
+-            return
+-        self._app.device_state = state
+-
+-        from core.services.audio.vad import VAD
+-        VAD.pause()
+-
+-        if self._audio_codec:
+-            self._audio_codec.stop_streams()
+-
+-        if state == DeviceState.LISTENING:
+-            if self._audio_codec:
+-                if self._audio_codec.output_stream.is_active():
+-                    self._audio_codec.output_stream.stop_stream()
+-                if not self._audio_codec.input_stream.is_active():
+-                    self._audio_codec.input_stream.start_stream()
+-        elif state == DeviceState.SPEAKING:
+-            if self._audio_codec:
+-                if self._audio_codec.input_stream.is_active():
+-                    self._audio_codec.input_stream.stop_stream()
+-                if not self._audio_codec.output_stream.is_active():
+-                    self._audio_codec.output_stream.start_stream()
+-
+-    # Connection management
+-
+-    async def connect(self):
+-        """Connect to XiaoZhi server."""
+-        from core.services.protocols.websocket_protocol import WebsocketProtocol
+-
+-        self.protocol = WebsocketProtocol()
+-
+-        # Wire up callbacks directly
+-        self.protocol.on_network_error = self._on_network_error
+-        self.protocol.on_incoming_audio = self._on_incoming_audio
+-        self.protocol.on_incoming_json = self._on_incoming_json
+-        self.protocol.on_audio_channel_opened = self._on_audio_channel_opened
+-        self.protocol.on_audio_channel_closed = self._on_audio_channel_closed
+-
+-        return await self.protocol.connect()
+-
+-    async def disconnect(self):
+-        """Disconnect from XiaoZhi server."""
+-        if self.protocol:
+-            await self.protocol.close_audio_channel()
+-
+-    def is_connected(self) -> bool:
+-        """Check if connected to XiaoZhi server."""
+-        return self.protocol is not None and self.protocol.is_audio_channel_opened()
+-
+-    # Audio initialization
+-
+-    def init_audio(self):
+-        """Initialize audio codec and start audio input trigger."""
+-        try:
+-            from core.services.audio.codec import AudioCodec
+-
+-            self._audio_codec = AudioCodec()
+-        except Exception as e:
+-            logger.warning(f"[XiaoZhi] Failed to initialize audio: {e}")
+-            return
+-
+-        threading.Thread(target=self._audio_input_trigger, daemon=True).start()
+-
+-    # Protocol callbacks
+-
+-    def _on_network_error(self, message):
+-        """Handle network error."""
+-        self.set_device_state(DeviceState.IDLE)
+-        if self.device_state != DeviceState.CONNECTING:
+-            self.set_device_state(DeviceState.IDLE)
+-            asyncio.run_coroutine_threadsafe(
+-                self.disconnect(), self._app.loop
+-            )
+-
+-    def _on_incoming_audio(self, data):
+-        """Handle incoming audio."""
+-        if self.device_state == DeviceState.SPEAKING:
+-            self._audio_codec.write_audio(data)
+-
+-    def _on_incoming_json(self, json_data):
+-        """Handle incoming JSON message."""
+-        try:
+-            if not json_data:
+-                return
+-
+-            data = json.loads(json_data) if isinstance(json_data, str) else json_data
+-            msg_type = data.get("type", "")
+-
+-            if msg_type == "tts":
+-                self._handle_tts_message(data)
+-            elif msg_type == "stt":
+-                self._handle_stt_message(data)
+-            elif msg_type == "llm":
+-                self._handle_llm_message(data)
+-        except Exception as exc:
+-            logger.error(
+-                f"[XiaoZhi] Failed to handle incoming json: {type(exc).__name__}: {exc}"
+-            )
+-
+-    def _on_audio_channel_opened(self):
+-        """Handle audio channel opened."""
+-        self.set_device_state(DeviceState.IDLE)
+-
+-    def _on_audio_channel_closed(self):
+-        """Handle audio channel closed."""
+-        self.set_device_state(DeviceState.IDLE)
+-        if self._audio_codec:
+-            self._audio_codec.stop_streams()
+-
+-    # JSON message handlers
+-
+-    def _handle_tts_message(self, data):
+-        """Handle TTS message."""
+-        state = data.get("state", "")
+-        if state == "start":
+-            self._app.schedule(lambda: self._handle_tts_start())
+-        elif state == "stop":
+-            self._app.schedule(lambda: self._handle_tts_stop())
+-        elif state == "sentence_start":
+-            text = data.get("text", "")
+-            if text:
+-                logger.ai_response(text, module="XiaoZhi")
+-                self._app.schedule(lambda: self._app.set_chat_message("assistant", text))
+-
+-    def _handle_tts_start(self):
+-        """Handle TTS start."""
+-        if self.device_state in [DeviceState.IDLE, DeviceState.LISTENING]:
+-            self.set_device_state(DeviceState.SPEAKING)
+-
+-    def _handle_tts_stop(self):
+-        """Handle TTS stop."""
+-        if self._tts_stop_future and not self._tts_stop_future.done() and self._session_loop:
+-            self._session_loop.call_soon_threadsafe(
+-                self._tts_stop_future.set_result, True
+-            )
+-
+-    def _handle_stt_message(self, data):
+-        """Handle STT message."""
+-        text = data.get("text", "")
+-        if text:
+-            logger.user_speech(text, module="XiaoZhi")
+-            self._app.schedule(lambda: self._app.set_chat_message("user", text))
+-
+-    def _handle_llm_message(self, data):
+-        """Handle LLM message."""
+-        text = data.get("text", "")
+-        if text:
+-            logger.ai_response(text, module="XiaoZhi")
+-            self._app.schedule(lambda: self._app.set_chat_message("assistant", text))
+-        emotion = data.get("emotion", "")
+-        if emotion:
+-            self._app.schedule(lambda: self._app.set_emotion(emotion))
+-
+-    # Audio input handling
+-
+-    def handle_input_audio(self):
+-        """Handle audio input - read and send to server."""
+-        if self.device_state != DeviceState.LISTENING:
+-            return
+-
+-        encoded_data = self._audio_codec.read_audio()
+-        if encoded_data and self.is_connected():
+-            asyncio.run_coroutine_threadsafe(
+-                self.send_audio(encoded_data), self._app.loop
+-            )
+-
+-    def _audio_input_trigger(self):
+-        """Trigger audio input event periodically."""
+-        while self._app and self._app.running:
+-            if self._audio_codec and self._audio_codec.input_stream.is_active():
+-                from core.services.protocols.typing import EventType
+-                self._app.events[EventType.AUDIO_INPUT_READY_EVENT].set()
+-            import time
+-            time.sleep(0.01)
+-
+-    # User actions
+-
+-    def start_listening(self):
+-        """Start listening."""
+-        self._app.schedule(self._start_listening_impl)
+-
+-    def _start_listening_impl(self):
+-        """Start listening implementation."""
+-        self.set_device_state(DeviceState.IDLE)
+-        asyncio.run_coroutine_threadsafe(
+-            self.send_abort_speaking(AbortReason.ABORT),
+-            self._app.loop,
+-        )
+-        asyncio.run_coroutine_threadsafe(
+-            self.send_start_listening(ListeningMode.MANUAL), self._app.loop
+-        )
+-        self.set_device_state(DeviceState.LISTENING)
+-
+-    def stop_listening(self):
+-        """Stop listening."""
+-        self._app.schedule(self._stop_listening_impl)
+-
+-    def _stop_listening_impl(self):
+-        """Stop listening implementation."""
+-        asyncio.run_coroutine_threadsafe(
+-            self.send_stop_listening(), self._app.loop
+-        )
+-        self.set_device_state(DeviceState.IDLE)
+-
+-    def abort_speaking(self, reason):
+-        """Abort speaking."""
+-        self.set_device_state(DeviceState.IDLE)
+-        asyncio.run_coroutine_threadsafe(
+-            self.send_abort_speaking(AbortReason.ABORT),
+-            self._app.loop,
+-        )
+-
+-    # Send methods
+-
+-    async def send_audio(self, frames):
+-        """Send audio frames."""
+-        if self.protocol:
+-            await self.protocol.send_audio(frames)
+-
+-    async def send_text(self, text: str):
+-        """Send text message."""
+-        if self.protocol and self.protocol.is_audio_channel_opened():
+-            try:
+-                message = {
+-                    "type": "listen",
+-                    "mode": "manual",
+-                    "state": "detect",
+-                    "text": text,
+-                }
+-                await self.protocol.send_text(json.dumps(message))
+-                logger.info(f"[XiaoZhi] Text sent: {text}")
+-            except Exception as e:
+-                logger.error(f"[XiaoZhi] Failed to send text: {e}")
+-        else:
+-            logger.warning("[XiaoZhi] Not connected, cannot send text")
+-
+-    async def send_start_listening(self, mode):
+-        """Send start listening command."""
+-        if self.protocol:
+-            await self.protocol.send_start_listening(mode)
+-
+-    async def send_stop_listening(self):
+-        """Send stop listening command."""
+-        if self.protocol:
+-            await self.protocol.send_stop_listening()
+-
+-    async def send_abort_speaking(self, reason):
+-        """Send abort speaking command."""
+-        if self.protocol:
+-            await self.protocol.send_abort_speaking(reason)
+-
+-    # Wakeup session
+-
+-    def stop_wakeup_session(self):
+-        """Stop any active wakeup session and abort server-side audio."""
+-        if self._session_loop and self._vad_future and not self._vad_future.done():
+-            self._session_loop.call_soon_threadsafe(self._vad_future.cancel)
+-        if self._session_loop and self._tts_stop_future and not self._tts_stop_future.done():
+-            self._session_loop.call_soon_threadsafe(self._tts_stop_future.cancel)
+-
+-        self.set_device_state(DeviceState.IDLE)
+-
+-        vad = get_vad()
+-        if vad:
+-            vad.pause()
+-
+-        if self.is_connected() and self._session_loop:
+-            asyncio.run_coroutine_threadsafe(
+-                self.send_abort_speaking(AbortReason.ABORT), self._session_loop
+-            )
+-
+-    async def start_wakeup_session(self):
+-        """Start a VAD-driven wakeup session: notify → listen → silence → stop."""
+-        if not self.protocol:
+-            logger.warning("XiaoZhi is not ready, skip wakeup session", module="XiaoZhi")
+-            return
+-
+-        self._session_loop = asyncio.get_running_loop()
+-        vad = get_vad()
+-        codec = get_audio_codec()
+-        speaker = get_speaker()
+-
+-        try:
+-            while True:
+-                self.set_device_state(DeviceState.IDLE)
+-                await self.send_abort_speaking(AbortReason.ABORT)
+-
+-                if self._is_first_round:
+-                    self._is_first_round = False
+-                    await self._play_notify(speaker)
+-
+-                # Wait for speech
+-                vad.resume("speech")
+-                result = await self._wait_vad_event(
+-                    timeout=self.config.get_app_config("wakeup.timeout", 20)
+-                )
+-                if result is None:
+-                    self.set_device_state(DeviceState.IDLE)
+-                    logger.info("Wakeup timeout, exit listening", module="XiaoZhi")
+-                    after_wakeup = self.config.get_app_config("wakeup.after_wakeup")
+-                    if after_wakeup and speaker:
+-                        await after_wakeup(speaker, source="xiaozhi")
+-                    return
+-
+-                event_type, event_data = result
+-                if event_type != "speech":
+-                    logger.debug(f"Expected speech, got {event_type}", module="XiaoZhi")
+-                    return
+-
+-                # Speech detected — send buffered audio and start listening
+-                logger.debug(
+-                    f"VAD detected speech, buffer size: {len(event_data or b'')}",
+-                    module="XiaoZhi",
+-                )
+-                set_speech_frames(event_data)
+-                if codec:
+-                    codec.input_stream.start_stream()
+-                await self.send_start_listening(ListeningMode.MANUAL)
+-                self.set_device_state(DeviceState.LISTENING)
+-
+-                # Wait for silence
+-                vad.resume("silence")
+-                result = await self._wait_vad_event()
+-                if result:
+-                    event_type, _ = result
+-                    logger.debug(f"VAD detected silence, stop listening", module="XiaoZhi")
+-
+-                # Prepare TTS stop future before sending stop_listening,
+-                # so we don't miss the tts_stop event.
+-                self._tts_stop_future = self._session_loop.create_future()
+-
+-                await self.send_stop_listening()
+-                self.set_device_state(DeviceState.IDLE)
+-
+-                # Wait for TTS to finish, then start next round
+-                tts_finished = await self._wait_tts_stop(timeout=30)
+-                if not tts_finished:
+-                    break
+-        except asyncio.CancelledError:
+-            logger.debug("Wakeup session cancelled", module="XiaoZhi")
+-            raise
+-        finally:
+-            if vad:
+-                vad.pause()
+-            self.set_device_state(DeviceState.IDLE)
+-            self._vad_future = None
+-            self._tts_stop_future = None
+-
+-    async def _wait_vad_event(self, timeout=None):
+-        """Wait for a VAD event (speech/silence)."""
+-        from core.wakeup_session import EventManager
+-
+-        self._vad_future = self._session_loop.create_future()
+-        original_on_speech = EventManager.on_speech
+-        original_on_silence = EventManager.on_silence
+-
+-        def _on_speech(speech_buffer):
+-            if self._vad_future and not self._vad_future.done():
+-                self._session_loop.call_soon_threadsafe(
+-                    self._vad_future.set_result, ("speech", speech_buffer)
+-                )
+-
+-        def _on_silence():
+-            if self._vad_future and not self._vad_future.done():
+-                self._session_loop.call_soon_threadsafe(
+-                    self._vad_future.set_result, ("silence", None)
+-                )
+-
+-        EventManager.on_speech = _on_speech
+-        EventManager.on_silence = _on_silence
+-
+-        try:
+-            return await asyncio.wait_for(self._vad_future, timeout=timeout)
+-        except asyncio.TimeoutError:
+-            return None
+-        finally:
+-            EventManager.on_speech = original_on_speech
+-            EventManager.on_silence = original_on_silence
+-            self._vad_future = None
+-
+-    async def _wait_tts_stop(self, timeout=None):
+-        """Wait for TTS playback to finish."""
+-        if not self._tts_stop_future:
+-            self._tts_stop_future = self._session_loop.create_future()
+-        try:
+-            return await asyncio.wait_for(self._tts_stop_future, timeout=timeout)
+-        except asyncio.TimeoutError:
+-            return False
+-        finally:
+-            self._tts_stop_future = None
+-
+-    async def _play_notify(self, speaker):
+-        """Play the listening-ready notification sound."""
+-        if not _NOTIFY_PCM or not speaker:
+-            return
+-        try:
+-            await speaker.play(buffer=_NOTIFY_PCM)
+-            duration = len(_NOTIFY_PCM) / (24000 * 2)
+-            await asyncio.sleep(duration)
+-        except Exception as exc:
+-            logger.debug(f"Notify sound error: {exc}", module="XiaoZhi")
+-
+-    # Shutdown
+-
+-    def shutdown(self):
+-        """Shutdown XiaoZhi - close audio and disconnect."""
+-        if self._audio_codec:
+-            self._audio_codec.close()
+-
+-        if self._app and self._app.loop:
+-            asyncio.run_coroutine_threadsafe(
+-                self.disconnect(), self._app.loop
+-            )
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 8414a78..ad304b1 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -10,8 +10,8 @@ services:
+       - API_SERVER_ENABLE=1 # 启用 HTTP API 服务（可选）
+       - API_SERVER_HOST=0.0.0.0 # HTTP API 服务监听地址（默认监听 127.0.0.1）
+       - OPENCLAW_ENABLE=1       # 启用 OpenClaw（兼容旧值 OPENCLAW_ENABLED）
+-      # - QWENPAW_ENABLE=1       # 启用 QwenPaw（可选）
+-      # - XIAOZHI_ENABLE=1       # 启用小智 AI（可选）
++      # Home Assistant 没有环境变量开关，完全由 config.py 中的
++      # homeassistant.enabled 控制（见下方挂载的 config.py）
+     volumes:
+       - ./config.py:/app/config.py
+       - ./openclaw:/app/openclaw
+diff --git a/main.py b/main.py
+index 6f08805..da89d1b 100644
+--- a/main.py
++++ b/main.py
+@@ -27,68 +27,51 @@ from core.utils.config_loader import ensure_config_module_loaded
+ config_path = ensure_config_module_loaded()
+ 
+ from core.app import MainApp
++from core.utils.config import ConfigManager
+ from core.utils.logger import logger
+ 
+ 
+ main_app_instance = None
+ 
+ # 启动配置（从环境变量读取）
+-connect_xiaozhi = False  # 是否连接小智 AI
+ enable_api_server = False  # 是否开启 API Server
++enable_openclaw = False  # 是否连接 OpenClaw
+ 
+ 
+ def setup_config():
+     """解析命令行参数和环境变量"""
+-    global connect_xiaozhi, enable_api_server, enable_xiaozhi, enable_openclaw, enable_openai, enable_qwenpaw
++    global enable_api_server, enable_openclaw
+ 
+     parser = argparse.ArgumentParser(description="小爱音箱接入 Open XiaoAI")
+     parser.parse_args()
+ 
+     # 从环境变量读取配置
+     enable_api_server = os.environ.get("API_SERVER_ENABLE", "").lower() in ("1", "true", "yes")
+-    enable_xiaozhi = os.environ.get("XIAOZHI_ENABLE", "").lower() in ("1", "true", "yes")
+     # 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
+     openclaw_env = os.environ.get("OPENCLAW_ENABLE") or os.environ.get("OPENCLAW_ENABLED") or ""
+     enable_openclaw = openclaw_env.lower() in ("1", "true", "yes")
+-    enable_openai = os.environ.get("OPENAI_ENABLE", "").lower() in (
+-        "1",
+-        "true",
+-        "yes",
+-    )
+-    enable_qwenpaw = os.environ.get("QWENPAW_ENABLE", "").lower() in (
+-        "1",
+-        "true",
+-        "yes",
++
++    # Home Assistant 没有独立的环境变量开关，完全由 config.py 中的
++    # homeassistant.enabled 控制（此处仅用于日志展示）。
++    homeassistant_enabled = bool(
++        ConfigManager.instance().get_app_config("homeassistant.enabled", False)
+     )
+ 
+-    # 计算 AUDIO_INPUT_ENABLE 实际生效的值（默认 1/true）
+-    audio_input_enabled = os.environ.get("AUDIO_INPUT_ENABLE", "1").strip().lower() in ("1", "true", "yes", "on")
+-    
+-    logger.info(f"[Main] ENV: XIAOZHI_ENABLE={os.environ.get('XIAOZHI_ENABLE') or 'not set (disabled)'}, "
+-                f"API_SERVER_ENABLE={os.environ.get('API_SERVER_ENABLE') or 'not set (disabled)'}, "
+-                f"OPENCLAW_ENABLE={os.environ.get('OPENCLAW_ENABLE') or os.environ.get('OPENCLAW_ENABLED') or 'not set (disabled)'}, "
+-                f"OPENAI_ENABLE={os.environ.get('OPENAI_ENABLE') or 'not set (disabled)'}, "
+-                f"QWENPAW_ENABLE={os.environ.get('QWENPAW_ENABLE') or 'not set (disabled)'}, "
+-                f"AUDIO_INPUT_ENABLE={1 if audio_input_enabled else 0}")
++    logger.info(
++        f"[Main] ENV: API_SERVER_ENABLE={os.environ.get('API_SERVER_ENABLE') or 'not set (disabled)'}, "
++        f"OPENCLAW_ENABLE={os.environ.get('OPENCLAW_ENABLE') or os.environ.get('OPENCLAW_ENABLED') or 'not set (disabled)'}"
++    )
+     logger.info(f"[Main] Using config file: {config_path}")
+ 
+     # 打印模块启用情况
+     logger.info("[Main] 模块启用情况:")
+     logger.info("小爱指令拦截器启用", module="Main")
+-    logger.info(
+-        f"小智 AI Bridge: {'启用' if enable_xiaozhi else '禁用'}",
+-        module="Main",
+-    )
+     logger.info(
+         f"OpenClaw Bridge: {'启用' if enable_openclaw else '禁用'}",
+         module="Main",
+     )
+     logger.info(
+-        f"OpenAI: {'启用' if enable_openai else '禁用'}",
+-        module="Main",
+-    )
+-    logger.info(
+-        f"QwenPaw: {'启用' if enable_qwenpaw else '禁用'}",
++        f"Home Assistant Bridge (config.py 控制): {'启用' if homeassistant_enabled else '禁用'}",
+         module="Main",
+     )
+     logger.info(
+@@ -97,20 +80,13 @@ def setup_config():
+     )
+ 
+ 
+-def run_services(xiaozhi_mode: bool = False):
+-    """统一的服务启动入口
+-
+-    Args:
+-        xiaozhi_mode: 是否启动小智 AI 完整服务（包括 VAD/KWS/GUI）
+-    """
+-    global main_app_instance, enable_api_server, enable_openclaw, enable_openai, enable_qwenpaw
++def run_services():
++    """统一的服务启动入口"""
++    global main_app_instance, enable_api_server, enable_openclaw
+ 
+     # 统一使用 MainApp 管理所有服务
+     main_app_instance = MainApp.instance(
+-        enable_xiaozhi=xiaozhi_mode,
+         enable_openclaw=enable_openclaw,
+-        enable_openai=enable_openai,
+-        enable_qwenpaw=enable_qwenpaw,
+     )
+     main_app_instance.run(enable_api_server=enable_api_server)
+ 
+@@ -123,8 +99,7 @@ def run_services(xiaozhi_mode: bool = False):
+ 
+ 
+ def main():
+-    global enable_xiaozhi
+-    run_services(xiaozhi_mode=enable_xiaozhi)
++    run_services()
+     return 0
+ 
+ 
+diff --git a/scripts/start.sh b/scripts/start.sh
+index c7591bc..ba5d097 100755
+--- a/scripts/start.sh
++++ b/scripts/start.sh
+@@ -20,11 +20,8 @@ echo -e "${GREEN}  Open-XiaoAI Bridge 启动脚本${NC}"
+ echo -e "${GREEN}========================================${NC}"
+ echo ""
+ 
+-XIAOZHI_ENABLED=$(printf '%s' "${XIAOZHI_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
+ # 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
+ OPENCLAW_ENABLE_VALUE=$(printf '%s' "${OPENCLAW_ENABLE:-${OPENCLAW_ENABLED:-}}" | tr '[:upper:]' '[:lower:]')
+-OPENAI_ENABLE_VALUE=$(printf '%s' "${OPENAI_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
+-QWENPAW_ENABLE_VALUE=$(printf '%s' "${QWENPAW_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
+ 
+ # 1. 检查 uv
+ if ! command -v uv &> /dev/null; then
+@@ -51,8 +48,24 @@ fi
+ ONNX_LIB_DIR="$(uv run python -c "from pathlib import Path; import onnxruntime; print(Path(onnxruntime.__file__).parent / 'capi')" 2>/dev/null)" && \
+     export DYLD_LIBRARY_PATH="${ONNX_LIB_DIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+ 
++# Home Assistant 没有环境变量开关，完全由 config.py 的 homeassistant.enabled 控制
++HOMEASSISTANT_ENABLED=$(uv run python -c "
++import sys
++sys.path.insert(0, '.')
++try:
++    from core.utils.config_loader import load_config_module
++    config_module = load_config_module()
++    APP_CONFIG = getattr(config_module, 'APP_CONFIG', {})
++except Exception:
++    try:
++        from config import APP_CONFIG
++    except ImportError:
++        APP_CONFIG = {}
++print('true' if APP_CONFIG.get('homeassistant', {}).get('enabled', False) else 'false')
++" 2>/dev/null || echo "false")
++
+ # 3. 检查 KWS 相关模型和关键词文件
+-if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]; then
++if [[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$HOMEASSISTANT_ENABLED" == "true" ]]; then
+     MODEL_DIR="core/models"
+     REQUIRED_MODELS=("silero_vad.onnx" "encoder.onnx" "decoder.onnx" "joiner.onnx" "tokens.txt" "bpe.model")
+     MISSING_MODELS=()
+@@ -142,7 +155,7 @@ if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~
+         exit 1
+     fi
+ else
+-    echo -e "${YELLOW}⚠ 小智、OpenClaw、OpenAI 和 QwenPaw 均未启用，跳过模型检查和关键词预生成${NC}"
++    echo -e "${YELLOW}⚠ OpenClaw 和 Home Assistant 均未启用，跳过模型检查和关键词预生成${NC}"
+ fi
+ 
+ # 4. 检查配置
+diff --git a/testconfig.py b/testconfig.py
+deleted file mode 100644
+index 616d621..0000000
+--- a/testconfig.py
++++ /dev/null
+@@ -1,337 +0,0 @@
+-import asyncio
+-import socket
+-import subprocess
+-import sys
+-import time
+-import uuid
+-
+-import requests
+-
+-
+-# 每次唤醒生成独立 Session，对话互不干扰
+-# 适合以下场景：
+-#   - "提问 → 回答"式交互，不需要 Agent 记住上下文
+-#   - 长期使用同一 Session 导致 Agent 上下文窗口堆积过长，影响响应质量和速度
+-# def new_session_key():
+-#     return f"agent:main:session-{uuid.uuid4().hex[:8]}"
+-
+-
+-async def before_wakeup(speaker, text, source, app):
+-    """
+-    处理收到的用户消息，并决定是否唤醒 AI。
+-
+-    参数：
+-        speaker : SpeakerManager，可调用 play/abort_xiaoai/wake_up 等方法
+-        text    : 识别到的文字内容
+-        source  : 唤醒来源
+-                    'kws'    — 本地关键词唤醒（用户说了唤醒词）
+-                    'xiaoai' — 小爱同学收到用户语音指令
+-        app     : MainApp 实例，可调用 send_to_openclaw / send_to_openai / send_to_qwenpaw 等方法
+-
+-    返回值：
+-        "openclaw" — 进入 OpenClaw 连续对话流程
+-        "openai"   — 进入 OpenAI 兼容服务连续对话流程（例如 Hermes Agent API Server）
+-        "qwenpaw"  — 进入 QwenPaw 连续对话流程
+-        "xiaozhi"  — 进入小智 AI 流程
+-        None       — 不做额外处理（可在此自行调用 app.send_to_openclaw 等）
+-
+-    ---
+-    动态切换 session_key：
+-        每次进入此函数前，框架会自动将 session_key 重置为配置文件中的默认值。
+-        如需路由到其他 Agent，在 return "openclaw" 之前调用：
+-            app.set_openclaw_session_key("agent:main:xxx")
+-        不调用则自动使用 openclaw.session_key 的默认值，无需手动重置。
+-    """
+-    if source == "kws":
+-        # --- 示例一：按唤醒词路由到不同 Agent ---
+-        # AGENT_SESSIONS = {
+-        #     "龙虾": "agent:assistant:open-xiaoai-bridge",  # 说"你好龙虾" → 路由到 assistant Agent
+-        #     "小美": "agent:xiaomei:open-xiaoai-bridge",    # 说"你好小美" → 路由到 xiaomei Agent
+-        #     "管家": "agent:butler:open-xiaoai-bridge",     # 说"你好管家" → 路由到 butler Agent
+-        # }
+-        # for keyword, session_key in AGENT_SESSIONS.items():
+-        #     if keyword in text:
+-        #         app.set_openclaw_session_key(session_key)
+-        #         await speaker.play(text=f"{keyword}来了")
+-        #         return "openclaw"
+-
+-        # --- 示例二：每次唤醒生成独立 Session ---
+-        # if "龙虾" in text:
+-        #     app.set_openclaw_session_key(new_session_key())
+-        #     await speaker.play(text="龙虾来了")
+-        #     return "openclaw"
+-
+-        # --- 示例三：进入 OpenClaw 前播放服务端本地开场白 ---
+-        # if "龙虾" in text:
+-        #     await speaker.play(server_file="/path/to/openclaw_intro.wav")
+-        #     return "openclaw"
+-
+-        # Route to OpenClaw Agent by wake word
+-        if "龙虾" in text:
+-            await speaker.play(text="龙虾来了")
+-            return "openclaw"
+-
+-        if "小黑" in text:
+-            await speaker.play(text="小黑来了")
+-            return "openai"
+-
+-        if "小爪" in text:
+-            await speaker.play(text="小爪来了")
+-            return "qwenpaw"
+-
+-        if "小智" in text:
+-            await speaker.play(text="小智来了")
+-            return "xiaozhi"
+-
+-        if "小▁p" in text:
+-            await speaker.play(text="我来了")
+-            speaker.wake_up()
+-            return None
+-        if "美美" in text:
+-            await speaker.play(text="干嘛！我在写作业！")
+-            return "openai"
+-        return None
+-
+-    if source == "xiaoai":
+-        # --- 示例四：小爱指令按用户名路由到不同 Session ---
+-        # if text == "召唤小美":
+-        #     app.set_openclaw_session_key("agent:xiaomei:open-xiaoai-bridge")
+-        #     await speaker.abort_xiaoai()
+-        #     return "openclaw"
+-      #  await speaker.play(text="我来了，请问有什么需要帮忙的吗？")
+-        await speaker.abort_xiaoai()
+-        return None
+-        
+-async def after_wakeup(speaker, source=None, session_key=None):
+-    """
+-    退出唤醒状态
+-
+-    - source: 退出来源
+-        - 'xiaozhi': 小智对话超时退出
+-        - 'openclaw': OpenClaw 连续对话退出
+-        - 'openai': OpenAI 兼容服务连续对话退出
+-        - 'qwenpaw': QwenPaw 连续对话退出
+-    - session_key: 当前 OpenClaw/OpenAI/QwenPaw 后端 session_key
+-        可据此区分是哪个 Agent 退出，例如播放不同的退出提示语
+-    """
+-    if source == "openclaw":
+-        # 示例：退出 OpenClaw 时播放服务端本地结束语
+-        # await speaker.play(server_file="/path/to/openclaw_bye.wav")
+-
+-        # 示例：按 agentId 区分退出提示语
+-        # 所有后端的 session_key 已统一为 agent:<agentId>:<rest> 格式，第二段即 agentId。
+-        # 仍建议做越界防护，以兼容自定义的非标准 session_key。
+-        # parts = session_key.split(":") if session_key else []
+-        # agent_id = parts[1] if len(parts) > 1 else None
+-        # if agent_id == "assistant":
+-        #     await speaker.play(text="助手，再见")
+-        # elif agent_id == "xiaomei":
+-        #     await speaker.play(text="小美，再见")
+-        # else:
+-        #     await speaker.play(text="再见")
+-        await speaker.play(text="龙虾，再见")
+-    if source == "qwenpaw":
+-        await speaker.play(text="小爪，再见")
+-    if source == "xiaozhi":
+-        await speaker.play(text="小智，再见")
+-    if source == "openai":
+-        await speaker.play(text="我先退下了")
+-           
+-
+-APP_CONFIG = {
+-    "wakeup": {
+-        # 自定义唤醒词列表（英文字母要全小写）
+-        "keywords": [
+-            "你好小智",
+-            "小智小智",
+-            "hi open claw",
+-            "你好龙虾",
+-            "龙虾你好",
+-            "你好小p",
+-            "小p你好",
+-            "美美",
+-            "小黑你好",
+-            "你好小爪",
+-            "小爪你好",
+-        ],
+-        # 静音多久后自动退出唤醒（秒）
+-        "timeout": 20,
+-        # 语音识别结果回调
+-        "before_wakeup": before_wakeup,
+-        # 退出唤醒时的提示语（设置为空可关闭）
+-        "after_wakeup": after_wakeup,
+-    },
+-    "kws": {
+-        # 唤醒词置信度加成（越高越难误触发，越低越灵敏）
+-        "keywords_score": 2.0,
+-        # 唤醒词检测阈值（越低越灵敏，越高越难触发）
+-        "keywords_threshold": 0.2,
+-        # 唤醒词检测时的最小静默时长（ms），静默超过该时长则判定为说完
+-        "min_silence_duration": 480,
+-    },
+-    "vad": {
+-        # 语音检测阈值（0-1，越小越灵敏）
+-        "threshold": 0.10,
+-        # 最小语音时长（ms）
+-        "min_speech_duration": 250,
+-        # 最小静默时长（ms）
+-        "min_silence_duration": 500,
+-    },
+-    "audio_input": {
+-        # Input gain multiplier before VAD/KWS/ASR. Use 1.0 to disable.
+-        "gain": 1.0,
+-    },
+-    "asr": {
+-        # 支持 "sense_voice"（默认）、"paraformer"、"fire_red_asr" 或 "doubao"
+-        "model": "sense_voice",
+-        # 是否优先使用 INT8 量化模型（仅本地模型生效）
+-        "int8": True,
+-        # 可选：显式指定 core/models/ 下的模型目录名（仅本地模型生效）
+-        # "model_dir": "",
+-        "doubao": {
+-            # "standard": 录音文件识别标准版，调用 /submit + /query
+-            # "flash": 录音文件极速版，调用 /recognize/flash
+-            "mode": "standard",
+-            "app_key": "你的 App Key",
+-            "access_key": "你的 Access Key",
+-            # 火山 X-Api-Resource-Id：
+-            # standard 可选：
+-            #   "volc.bigasr.auc"  - 豆包录音文件识别模型 1.0
+-            #   "volc.seedasr.auc" - 豆包录音文件识别模型 2.0
+-            # flash 可选：
+-            #   "volc.bigasr.auc_turbo" - 录音文件极速版
+-            "resource_id": "volc.seedasr.auc",
+-            "language": "",
+-            "submit_timeout": 10,
+-            "query_timeout": 10,
+-            "poll_interval": 0.5,
+-            "max_wait_seconds": 20,
+-        },
+-    },
+-    "xiaozhi": {
+-        "OTA_URL": "http://127.0.0.1:8003/xiaozhi/ota/",
+-        "WEBSOCKET_URL": "ws://127.0.0.1:8000/xiaozhi/v1/",
+-        "WEBSOCKET_ACCESS_TOKEN": "", #（可选）一般用不到这个值
+-        "DEVICE_ID": "9e:dd:0f:d9:0a:1f", #（可选）默认自动生成
+-        "VERIFICATION_CODE": "", # 首次登陆时，验证码会在这里更新
+-    },
+-    "xiaoai": {
+-        "continuous_conversation_mode": True,
+-        "exit_command_keywords": ["停止", "退下", "退出", "下去吧"],
+-        "max_listening_retries": 2,  # 最多连续重新唤醒次数
+-        "exit_prompt": "再见，主人",
+-        "continuous_conversation_keywords": ["开启连续对话", "启动连续对话", "我想跟你聊天"]
+-    },
+-    # TTS (Text-to-Speech) Configuration
+-    "tts": {
+-        "doubao": {
+-            # 豆包语音合成 API 配置
+-            # 文档地址: https://www.volcengine.com/docs/6561/1598757?lang=zh
+-            # 产品地址: https://www.volcengine.com/docs/6561/1871062
+-            "app_id": "xxxx",         # 你的 App ID
+-            "access_key": "xxxxxx",       # 你的 Access Key
+-            "default_speaker": "zh_female_vv_uranus_bigtts",  # 音色 https://www.volcengine.com/docs/6561/1257544?lang=zh
+-            "audio_format": "pcm",  # 推荐默认值：局域网稳定环境下首音更快、播放更顺
+-            "stream": True,  # 推荐默认值：边合成边播放，首音延迟更低
+-        }
+-    },
+-    # OpenClaw Configuration
+-    "openclaw": {
+-        "url": "ws://127.0.0.1:18789",  # OpenClaw WebSocket 地址
+-        "token": "your_openclaw_token",  # OpenClaw 认证令牌
+-        # 输入模式：
+-        #   - "local_asr": 现有链路，使用本地 VAD + SherpaASR
+-        #   - "xiaoai_asr": 实验链路，唤醒小爱后接管原生 ASR 结果给 OpenClaw
+-        "input_mode": "local_asr",
+-        # session_key 格式：agent:<agentId>:<rest>
+-        #   agentId: OpenClaw 中配置的 Agent ID（默认为 main）
+-        #   rest:    会话标识，可自由命名，用于区分不同来源/场景 （默认为 open-xiaoai-bridge)
+-        # 也可在运行时动态切换（下一条消息即刻生效，无需重连）：
+-        #   app.set_openclaw_session_key("agent:assistant:open-xiaoai-bridge")
+-        "session_key": "agent:main:open-xiaoai-bridge",
+-        "identity_path": "/app/openclaw/identity/device.json",  # 设备身份文件路径；容器部署时建议挂载持久化目录
+-        "tts_speed": 1.0,  # TTS 语速 (0.5-2.0)，仅豆包 TTS 生效，小爱原生 TTS 不支持调速
+-        "tts_speaker": "xiaoai",  # "xiaoai" = 小爱原生 TTS；填豆包音色 ID 则用豆包 TTS；不设置则使用 tts.doubao.default_speaker
+-        # 可按 agentId 单独覆盖音色，优先级高于 tts_speaker
+-        # agentId 来自 session_key，格式为：agent:<agentId>:<rest>
+-        # 示例：
+-        # "agent_tts_speakers": {
+-        #     "assistant": "zh_female_vv_uranus_bigtts",
+-        #     "xiaomei": "zh_female_shuangkuaisisi_moon_bigtts",
+-        #     "butler": "xiaoai",
+-        # },
+-        "agent_tts_speakers": {},
+-        "response_timeout": 120,  # 等待 OpenClaw agent 响应的超时时间（秒）
+-        "exit_keywords": ["退出", "停止", "再见"],  # 退出连续对话的关键词
+-        # rule_prompt: 用于「自动播放」和「连续对话」场景
+-        #   - send_to_openclaw_and_play_reply() 会自动追加
+-        #   - OpenClawConversationController 会自动追加
+-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
+-        # rule_prompt_for_skill: 用于「Agent 自主播报」场景（方式三）
+-        #   - send_to_openclaw() 会自动追加
+-        #   - 告诉 Agent 需要调用 xiaoai-tts skill 来播报，因为服务端不会自动播放
+-        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字，调用 `xiaoai-tts` skill 播报出来。字数控制在300字以内"
+-    },
+-    # OpenAI-compatible Service Configuration
+-    # 可接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等兼容 /v1/chat/completions 的服务
+-    "openai": {
+-        "base_url": "http://192.168.100.80:4000/v1",
+-        "api_key": "sk-fnos-homeassistant",
+-        "model": "qwen3:14b",
+-        # 输入模式：
+-        #   - "local_asr": 使用本地 VAD + SherpaASR
+-        #   - "xiaoai_asr": 接管小爱原生 ASR 结果
+-        "input_mode": "local_asr",
+-        # session_key 统一采用 agent:<agentId>:<rest> 格式，便于 after_wakeup 解析
+-        "session_key": "agent:default:open-xiaoai-bridge",
+-        # 可选：把 session_key 作为请求头发给服务端，用于服务端长期记忆作用域。
+-        # 默认设为 Hermes 的 "X-Hermes-Session-Key"；它只用于长期记忆作用域，
+-        # chat/completions 仍是无状态（历史仍由 messages 携带），不会重复。
+-        # 接标准 OpenAI/Ollama/LM Studio 时该头会被忽略（无害），如需彻底关闭可留空。
+-        "session_header": "X-Hermes-Session-Key",
+-        "system_prompt": "",
+-        "temperature": 0.7,
+-        "max_tokens": 512,
+-        "history_max_messages": 20,
+-        "response_timeout": 120,
+-        "tts_speed": 1.0,
+-        "tts_speaker": "xiaoai",
+-        "session_tts_speakers": {},
+-        "exit_keywords": ["退出", "停止", "再见"],
+-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
+-        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字。字数控制在300字以内",
+-        "extra_body": {},
+-    },
+-    # QwenPaw Configuration
+-    # 需先启动 QwenPaw: qwenpaw app
+-    "qwenpaw": {
+-        "base_url": "http://127.0.0.1:8088",
+-        # agent_id 仅作为回退：当 session_key 不含 agentId 时才使用。
+-        # 正常情况下 agentId 直接从 session_key 的第二段解析，无需单独配置。
+-        "agent_id": "default",
+-        "user_id": "open-xiaoai-bridge",
+-        # 输入模式：
+-        #   - "local_asr": 使用本地 VAD + SherpaASR
+-        #   - "xiaoai_asr": 接管小爱原生 ASR 结果
+-        "input_mode": "local_asr",
+-        # session_key 采用 agent:<agentId>:<sessionId> 格式：
+-        #   - 第二段 agentId 作为 X-Agent-Id 请求头发给服务端
+-        #   - 第三段起为 sessionId，作为请求体 session_id 发给服务端
+-        # 例如 agent:default:open-xiaoai-bridge -> agent=default, session=open-xiaoai-bridge
+-        "session_key": "agent:default:open-xiaoai-bridge",
+-        # QwenPaw 当前推荐使用后台任务接口：
+-        # POST /api/console/chat/task -> GET /api/console/chat/task/{task_id}
+-        "send_path": "/api/console/chat/task",
+-        "task_status_path": "/api/console/chat/task/{task_id}",
+-        # 认证（可选）：非空时默认使用 Authorization 认证头
+-        "auth_token": "",
+-        "response_timeout": 120,
+-        "poll_interval": 0.5,
+-        "tts_speed": 1.0,
+-        "tts_speaker": "xiaoai",
+-        "session_tts_speakers": {},
+-        "exit_keywords": ["退出", "停止", "再见"],
+-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
+-        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送给 QwenPaw 的，他看不到你回复的文字。字数控制在300字以内",
+-    },
+-}
+diff --git a/tests/test_openai.py b/tests/test_openai.py
+deleted file mode 100644
+index 14a8896..0000000
+--- a/tests/test_openai.py
++++ /dev/null
+@@ -1,62 +0,0 @@
+-import importlib
+-import sys
+-import types
+-import unittest
+-from pathlib import Path
+-
+-ROOT = Path(__file__).resolve().parents[1]
+-
+-
+-class OpenAIHeadersTest(unittest.TestCase):
+-    def setUp(self):
+-        sys.modules.setdefault("open_xiaoai_server", types.SimpleNamespace())
+-        sys.modules.setdefault(
+-            "aiohttp",
+-            types.SimpleNamespace(ClientSession=object, ClientTimeout=object),
+-        )
+-        sys.modules.setdefault("requests", types.SimpleNamespace(post=None, get=None))
+-        if str(ROOT) not in sys.path:
+-            sys.path.insert(0, str(ROOT))
+-        sys.modules.pop("core.openai", None)
+-        self.manager = importlib.import_module("core.openai").OpenAIManager
+-        self.manager._api_key = ""
+-        self.manager._session_key = "agent:default:open-xiaoai-bridge"
+-
+-    def test_default_sends_hermes_session_header(self):
+-        """Default config targets Hermes: session_key goes out as the header."""
+-        self.assertEqual(
+-            "agent:default:open-xiaoai-bridge",
+-            self.manager._headers()["X-Hermes-Session-Key"],
+-        )
+-
+-    def test_empty_session_header_disables_it(self):
+-        """Setting session_header empty keeps requests header-free (plain OpenAI)."""
+-        self.manager._session_header = ""
+-        self.assertEqual({"Content-Type": "application/json"}, self.manager._headers())
+-
+-    def test_session_header_sent_when_configured(self):
+-        self.manager._session_header = "X-Hermes-Session-Key"
+-        headers = self.manager._headers()
+-        self.assertEqual(
+-            "agent:default:open-xiaoai-bridge",
+-            headers["X-Hermes-Session-Key"],
+-        )
+-
+-    def test_session_header_omitted_when_session_key_empty(self):
+-        self.manager._session_header = "X-Hermes-Session-Key"
+-        self.manager._session_key = ""
+-        self.assertNotIn("X-Hermes-Session-Key", self.manager._headers())
+-
+-    def test_bearer_auth_and_session_header_coexist(self):
+-        self.manager._api_key = "secret"
+-        self.manager._session_header = "X-Hermes-Session-Key"
+-        headers = self.manager._headers()
+-        self.assertEqual("Bearer secret", headers["Authorization"])
+-        self.assertEqual(
+-            "agent:default:open-xiaoai-bridge",
+-            headers["X-Hermes-Session-Key"],
+-        )
+-
+-
+-if __name__ == "__main__":
+-    unittest.main()
+diff --git a/tests/test_qwenpaw.py b/tests/test_qwenpaw.py
+deleted file mode 100644
+index 3a89816..0000000
+--- a/tests/test_qwenpaw.py
++++ /dev/null
+@@ -1,188 +0,0 @@
+-import importlib
+-import sys
+-import types
+-import unittest
+-from pathlib import Path
+-from unittest import mock
+-
+-ROOT = Path(__file__).resolve().parents[1]
+-
+-
+-class QwenPawManagerTest(unittest.TestCase):
+-    def setUp(self):
+-        self.server_stub = types.SimpleNamespace()
+-        sys.modules.setdefault("open_xiaoai_server", self.server_stub)
+-        sys.modules.setdefault(
+-            "aiohttp",
+-            types.SimpleNamespace(ClientSession=object, ClientTimeout=object),
+-        )
+-        sys.path.insert(0, str(ROOT)) if str(ROOT) not in sys.path else None
+-        sys.modules.pop("core.qwenpaw", None)
+-        self.qwenpaw_module = importlib.import_module("core.qwenpaw")
+-        self.manager = self.qwenpaw_module.QwenPawManager
+-        self._set_default_auth()
+-
+-    def _set_default_auth(self):
+-        self.manager._auth_token = ""
+-        self.manager._auth_header = "Authorization"
+-        self.manager._auth_scheme = "Bearer"
+-
+-    def test_build_payload_uses_qwenpaw_agent_request_shape(self):
+-        self.manager._session_key = "agent:default:speaker-session"
+-        self.manager._user_id = "speaker-user"
+-
+-        payload = self.manager._build_payload("你好")
+-
+-        self.assertEqual("speaker-session", payload["session_id"])
+-        self.assertEqual("speaker-user", payload["user_id"])
+-        self.assertTrue(payload["stream"])
+-        self.assertEqual(
+-            [{"role": "user", "content": [{"type": "text", "text": "你好"}]}],
+-            payload["input"],
+-        )
+-
+-    def test_parse_session_key_splits_agent_and_session(self):
+-        agent_id, session_id = self.manager._parse_session_key(
+-            "agent:assistant:my-session"
+-        )
+-        self.assertEqual("assistant", agent_id)
+-        self.assertEqual("my-session", session_id)
+-
+-    def test_parse_session_key_preserves_colons_in_session_id(self):
+-        agent_id, session_id = self.manager._parse_session_key(
+-            "agent:assistant:room:42"
+-        )
+-        self.assertEqual("assistant", agent_id)
+-        self.assertEqual("room:42", session_id)
+-
+-    def test_parse_session_key_falls_back_for_plain_key(self):
+-        self.manager._agent_id = "configured-agent"
+-        agent_id, session_id = self.manager._parse_session_key("plain-key")
+-        self.assertEqual("configured-agent", agent_id)
+-        self.assertEqual("plain-key", session_id)
+-
+-
+-    def test_extract_response_text_from_console_task_result(self):
+-        body = {
+-            "status": "completed",
+-            "session_id": "speaker-session",
+-            "output": [
+-                {
+-                    "type": "message",
+-                    "role": "assistant",
+-                    "content": [
+-                        {"type": "text", "text": "你好，"},
+-                        {"type": "text", "text": "我是小爪"},
+-                    ],
+-                }
+-            ],
+-        }
+-
+-        self.assertEqual("你好，我是小爪", self.manager._extract_response_text(body))
+-
+-    def test_extract_response_text_ignores_user_messages_and_usage(self):
+-        body = {
+-            "output": [
+-                {
+-                    "type": "message",
+-                    "role": "user",
+-                    "content": [{"type": "text", "text": "不要回显我"}],
+-                },
+-                {"type": "turn_usage", "text": "usage"},
+-                {
+-                    "type": "message",
+-                    "role": "assistant",
+-                    "content": [{"type": "text", "text": "只读助手回复"}],
+-                },
+-            ]
+-        }
+-
+-        self.assertEqual("只读助手回复", self.manager._extract_response_text(body))
+-
+-    def test_headers_include_agent_id(self):
+-        self.manager._session_key = "agent:assistant:main"
+-
+-        self.assertEqual(
+-            {"Content-Type": "application/json", "X-Agent-Id": "assistant"},
+-            self.manager._headers(),
+-        )
+-
+-    def test_headers_include_bearer_auth_when_token_configured(self):
+-        self.manager._session_key = "agent:assistant:main"
+-        self.manager._auth_token = "secret-token"
+-
+-        self.assertEqual(
+-            {
+-                "Content-Type": "application/json",
+-                "X-Agent-Id": "assistant",
+-                "Authorization": f"{self.manager._auth_scheme} {self.manager._auth_token}",
+-            },
+-            self.manager._headers(),
+-        )
+-
+-    def test_config_uses_default_auth_header_when_options_omitted(self):
+-        config = {
+-            "base_url": "http://example.test",
+-            "auth_token": "secret-token",
+-        }
+-        config_manager = types.SimpleNamespace(
+-            get_app_config=lambda *_args: config,
+-            add_reload_listener=lambda *_args: None,
+-        )
+-
+-        with mock.patch.object(
+-            self.qwenpaw_module.ConfigManager, "instance", return_value=config_manager
+-        ):
+-            self.manager.reload_from_config(enabled=True)
+-
+-        self.assertEqual("Authorization", self.manager._auth_header)
+-        self.assertEqual("Bearer", self.manager._auth_scheme)
+-        self.assertEqual(
+-            f"{self.manager._auth_scheme} {self.manager._auth_token}",
+-            self.manager._headers()["Authorization"],
+-        )
+-
+-    def test_headers_support_custom_auth_header_without_scheme(self):
+-        self.manager._session_key = "agent:assistant:main"
+-        self.manager._auth_token = "secret-token"
+-        self.manager._auth_header = "X-API-Key"
+-        self.manager._auth_scheme = ""
+-
+-        self.assertEqual(
+-            {
+-                "Content-Type": "application/json",
+-                "X-Agent-Id": "assistant",
+-                "X-API-Key": "secret-token",
+-            },
+-            self.manager._headers(),
+-        )
+-
+-
+-class WakeupKeywordStartupQwenPawTest(unittest.TestCase):
+-    def test_keyword_generation_enabled_for_qwenpaw(self):
+-        spec = importlib.util.spec_from_file_location(
+-            "kws_keywords_for_qwenpaw_test",
+-            ROOT / "core/services/audio/kws/keywords.py",
+-        )
+-        keywords = importlib.util.module_from_spec(spec)
+-        spec.loader.exec_module(keywords)
+-
+-        with mock.patch.dict(
+-            "os.environ",
+-            {
+-                "XIAOZHI_ENABLE": "",
+-                "OPENCLAW_ENABLE": "",
+-                "OPENCLAW_ENABLED": "",
+-                "OPENAI_ENABLE": "",
+-                "QWENPAW_ENABLE": "1",
+-            },
+-            clear=False,
+-        ):
+-            should_run, reason = keywords.should_generate_keywords()
+-
+-        self.assertTrue(should_run)
+-        self.assertEqual(reason, "")
+-
+-
+-if __name__ == "__main__":
+-    unittest.main()
+diff --git a/tests/test_wakeup_keywords.py b/tests/test_wakeup_keywords.py
+index b42fa9d..d90ac6c 100644
+--- a/tests/test_wakeup_keywords.py
++++ b/tests/test_wakeup_keywords.py
+@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
+ 
+ 
+ class WakeupKeywordStartupTest(unittest.TestCase):
+-    def test_keyword_generation_enabled_for_openai(self):
++    def test_keyword_generation_enabled_for_openclaw(self):
+         spec = importlib.util.spec_from_file_location(
+             "kws_keywords_for_test",
+             ROOT / "core/services/audio/kws/keywords.py",
+@@ -22,31 +22,118 @@ class WakeupKeywordStartupTest(unittest.TestCase):
+         keywords = importlib.util.module_from_spec(spec)
+         spec.loader.exec_module(keywords)
+ 
+-        with mock.patch.dict(
+-            os.environ,
+-            {
+-                "XIAOZHI_ENABLE": "",
+-                "OPENCLAW_ENABLE": "",
+-                "OPENCLAW_ENABLED": "",
+-                "OPENAI_ENABLE": "1",
+-            },
+-            clear=False,
++        class ConfigManagerStub:
++            @classmethod
++            def instance(cls):
++                return cls()
++
++            def get_app_config(self, path=None, default=None):
++                if path == "homeassistant.enabled":
++                    return False
++                return default
++
++        with (
++            mock.patch.object(keywords, "ConfigManager", ConfigManagerStub),
++            mock.patch.dict(
++                os.environ,
++                {
++                    "OPENCLAW_ENABLE": "1",
++                    "OPENCLAW_ENABLED": "",
++                },
++                clear=False,
++            ),
+         ):
+             should_run, reason = keywords.should_generate_keywords()
+ 
+         self.assertTrue(should_run)
+         self.assertEqual(reason, "")
+ 
+-    def test_startup_entrypoints_prepare_keywords_for_openai(self):
++    def test_keyword_generation_enabled_for_homeassistant(self):
++        """Home Assistant has no env var flag — should_generate_keywords()
++        must read homeassistant.enabled from config.py directly, or a
++        'Home Assistant only' setup would never get a keywords.txt."""
++        spec = importlib.util.spec_from_file_location(
++            "kws_keywords_for_test",
++            ROOT / "core/services/audio/kws/keywords.py",
++        )
++        keywords = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(keywords)
++
++        class ConfigManagerStub:
++            @classmethod
++            def instance(cls):
++                return cls()
++
++            def get_app_config(self, path=None, default=None):
++                if path == "homeassistant.enabled":
++                    return True
++                return default
++
++        with (
++            mock.patch.object(keywords, "ConfigManager", ConfigManagerStub),
++            mock.patch.dict(
++                os.environ,
++                {
++                    "OPENCLAW_ENABLE": "",
++                    "OPENCLAW_ENABLED": "",
++                },
++                clear=False,
++            ),
++        ):
++            should_run, reason = keywords.should_generate_keywords()
++
++        self.assertTrue(should_run)
++        self.assertEqual(reason, "")
++
++    def test_keyword_generation_disabled_when_both_off(self):
++        spec = importlib.util.spec_from_file_location(
++            "kws_keywords_for_test",
++            ROOT / "core/services/audio/kws/keywords.py",
++        )
++        keywords = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(keywords)
++
++        class ConfigManagerStub:
++            @classmethod
++            def instance(cls):
++                return cls()
++
++            def get_app_config(self, path=None, default=None):
++                if path == "homeassistant.enabled":
++                    return False
++                return default
++
++        with (
++            mock.patch.object(keywords, "ConfigManager", ConfigManagerStub),
++            mock.patch.dict(
++                os.environ,
++                {
++                    "OPENCLAW_ENABLE": "",
++                    "OPENCLAW_ENABLED": "",
++                },
++                clear=False,
++            ),
++        ):
++            should_run, _reason = keywords.should_generate_keywords()
++
++        self.assertFalse(should_run)
++
++    def test_startup_entrypoints_prepare_keywords_for_openclaw_and_homeassistant(self):
+         start_sh = (ROOT / "scripts/start.sh").read_text(encoding="utf8")
+         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf8")
+ 
+-        self.assertIn("OPENAI_ENABLE_VALUE", start_sh)
+-        self.assertIn("QWENPAW_ENABLE_VALUE", start_sh)
+-        self.assertIn('[[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
+-        self.assertIn('[[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
+-        self.assertIn('${OPENAI_ENABLE:-}', dockerfile)
+-        self.assertIn('${QWENPAW_ENABLE:-}', dockerfile)
++        self.assertIn("OPENCLAW_ENABLE_VALUE", start_sh)
++        self.assertIn("HOMEASSISTANT_ENABLED", start_sh)
++        self.assertIn('[[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
++        self.assertIn('[[ "$HOMEASSISTANT_ENABLED" == "true" ]]', start_sh)
++        self.assertIn("homeassistant", start_sh)
++        # No leftover XiaoZhi/OpenAI/QwenPaw gating in either entrypoint.
++        self.assertNotIn("XIAOZHI_ENABLE", start_sh)
++        self.assertNotIn("OPENAI_ENABLE", start_sh)
++        self.assertNotIn("QWENPAW_ENABLE", start_sh)
++        self.assertNotIn("XIAOZHI_ENABLE", dockerfile)
++        self.assertNotIn("OPENAI_ENABLE", dockerfile)
++        self.assertNotIn("QWENPAW_ENABLE", dockerfile)
+         self.assertIn('python core/services/audio/kws/keywords.py', dockerfile)
+ 
+ 

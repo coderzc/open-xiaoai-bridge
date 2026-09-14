@@ -4,15 +4,15 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12+-3776ab?logo=python&logoColor=white)](https://www.python.org/) [![Rust](https://img.shields.io/badge/Rust-native_module-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/) [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![GitHub Stars](https://img.shields.io/github/stars/coderzc/open-xiaoai-bridge?style=flat&logo=github)](https://github.com/coderzc/open-xiaoai-bridge/stargazers) [![Docker Image](https://img.shields.io/badge/ghcr.io-open--xiaoai--bridge-2496ed?logo=docker&logoColor=white)](https://ghcr.io/coderzc/open-xiaoai-bridge)
 
-[![New](https://img.shields.io/badge/🎉_新功能-OpenClaw_支持_自定义唤醒词_|_连续对话_|_多_Agent_路由_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
+[![New](https://img.shields.io/badge/🎉_新功能-Home_Assistant_集成_|_自定义唤醒词_|_连续对话_|_多_Agent_路由_|_克隆音色_|_流式播放-f97316)](https://github.com/coderzc/open-xiaoai-bridge/releases)
 
-**小爱音箱与外部 AI 服务（小智 AI、OpenClaw、OpenAI 兼容服务、QwenPaw）的桥接器**
+**小爱音箱与外部 AI 服务（OpenClaw、Home Assistant）的桥接器**
 
-打破小爱音箱的封闭生态，灵活接入多种 AI 服务，提供 HTTP API 实现远程控制。
+打破小爱音箱的封闭生态，灵活接入 AI Agent 与智能家居，提供 HTTP API 实现远程控制。
 
 [📺 演示 ①](https://www.bilibili.com/video/BV1DHcBz1Ex7) · [📺 演示 ②](https://www.bilibili.com/video/BV1UQQSBHEvg)
 
-[📖 快速开始](#-快速开始) · [🔌 OpenAI 兼容服务](#-openai-兼容服务) · [🐾 QwenPaw 集成](#-qwenpaw-集成) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
+[📖 快速开始](#-快速开始) · [🦞 OpenClaw 集成](#-openclaw-集成) · [🏠 Home Assistant 集成](#-home-assistant-集成) · [🔧 API 文档](#-api-server) · [🐛 常见问题](#-常见问题)
 
 > 本项目受 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 启发，并参考其 `examples/xiaozhi/` 示例演进而来，现已作为独立项目持续维护。
 
@@ -24,10 +24,8 @@
 
 | 功能                 | 说明                                                                             |
 | ------------------ | ------------------------------------------------------------------------------ |
-| 🔌 **OpenAI 兼容服务** | 接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等 `/v1/chat/completions` 服务 |
-| 🐾 **QwenPaw 集成**   | 接入 [QwenPaw](https://github.com/agentscope-ai/QwenPaw) HTTP Console 任务接口，支持指定 Agent 和会话 |
 | 🦞 **OpenClaw 集成** | 接入 [OpenClaw](https://github.com/openclaw/openclaw)，支持连续对话，可选豆包 TTS 或小爱原生 TTS  |
-| 🤖 **小智 AI 集成**    | 接入 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server) 实时音频流 |
+| 🏠 **Home Assistant 集成** | 接入 Home Assistant Conversation API，语音控制智能家居，支持连续对话                  |
 | 🎙️ **自定义唤醒词**     | 支持中英文，不同唤醒词可路由到不同 AI 服务或不同 OpenClaw Agent                                      |
 | 🧠 **多 Agent 路由**  | 一台音箱，多个唤醒词，每个唤醒词对应不同的 OpenClaw Agent Session，动态切换零开销                           |
 | 💬 **连续对话**        | 多轮对话无需反复唤醒，喊"小爱同学"可随时打断                                                        |
@@ -50,9 +48,9 @@
 
 ### 📥 模型文件
 
-如果你启用小智 AI，或 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
+如果 OpenClaw / Home Assistant 连续对话使用 `local_asr`，需要下载 `VAD + KWS + ASR` 模型文件。
 
-如果 OpenClaw / OpenAI 兼容服务 / QwenPaw 连续对话使用 `xiaoai_asr`，只需要 `VAD + KWS`，不需要本地 ASR 模型。
+如果 OpenClaw / Home Assistant 连续对话使用 `xiaoai_asr`（Home Assistant 默认即为此模式），只需要 `VAD + KWS`，不需要本地 ASR 模型。
 
 1. 从 [releases](https://github.com/coderzc/open-xiaoai-bridge/releases/tag/vad-kws-asr-models) 下载模型压缩包
 2. 解压模型文件（路径见下方具体部署方式）
@@ -75,7 +73,7 @@ docker compose up -d
 > image: ghcr.nju.edu.cn/coderzc/open-xiaoai-bridge:latest
 > ```
 
-> **💡 容器访问宿主机服务**：如果需要让容器访问宿主机上的 OpenClaw / QwenPaw，请查看 [Docker 常见问题](#-docker)。
+> **💡 容器访问宿主机服务**：如果需要让容器访问宿主机上的 OpenClaw / Home Assistant，请查看 [Docker 常见问题](#-docker)。
 
 `docker-compose.yml` 已包含模型目录挂载：
 
@@ -95,8 +93,8 @@ cd open-xiaoai-bridge
 # 依赖: uv, Rust
 # Linux 还需要: pkg-config, patchelf
 
-# 启动（按需设置环境变量）
-API_SERVER_ENABLE=1 XIAOZHI_ENABLE=1 OPENCLAW_ENABLE=1 OPENAI_ENABLE=1 QWENPAW_ENABLE=1 ./scripts/start.sh
+# 启动（按需设置环境变量；Home Assistant 没有环境变量开关，在 config.py 中设置 homeassistant.enabled）
+API_SERVER_ENABLE=1 OPENCLAW_ENABLE=1 ./scripts/start.sh
 
 # 启用 Client 鉴权（需与音箱端 token 一致）
 OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
@@ -106,17 +104,17 @@ OPEN_XIAOAI_TOKEN=your-secret-token API_SERVER_ENABLE=1 ./scripts/start.sh
 
 | 变量                   | 说明            | 默认值           |
 | -------------------- | ------------- | ------------- |
-| `XIAOZHI_ENABLE`     | 启用小智 AI     | 禁用            |
 | `OPENCLAW_ENABLE`    | 启用 OpenClaw | 禁用            |
-| `OPENAI_ENABLE` | 启用 OpenAI 兼容服务 | 禁用        |
-| `QWENPAW_ENABLE` | 启用 QwenPaw | 禁用        |
 | `API_SERVER_ENABLE`  | 启用 HTTP API | 禁用            |
-| `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后小智/KWS/local\_asr不可用） | 启用            |
+| `AUDIO_INPUT_ENABLE` | 启用音频输入（关闭后 KWS/local\_asr不可用） | 启用            |
 | `API_SERVER_HOST`    | API 监听地址    | `127.0.0.1`   |
 | `API_SERVER_PORT`    | API 监听端口    | `9092`        |
 | `OPEN_XIAOAI_TOKEN`  | Client 鉴权 token，设置后仅持有相同 token 的 Client 才能连接 | 不鉴权 |
 | `CONFIG_PATH`        | 自定义配置文件路径   | `./config.py` |
 | `LOGLEVEL`           | 日志级别        | `INFO`        |
+
+> **💡 Home Assistant 没有独立的环境变量开关**，完全由 `config.py` 中的
+> `APP_CONFIG["homeassistant"]["enabled"]` 控制，包括是否启动本地音频服务。
 
 ***
 
@@ -142,13 +140,12 @@ flowchart TB
             VAD["VAD<br/>语音起止检测"]
             KWS["KWS<br/>唤醒词检测"]
             ASR["SherpaASR<br/>离线语音识别"]
-            Codec["AudioCodec<br/>编码 / 播放"]
         end
 
         subgraph Runtime["运行时控制"]
             direction LR
             MainApp["MainApp<br/>主循环 / device_state"]
-            WakeupMgr["WakeupSessionManager<br/>唤醒会话状态机"]
+            WakeupMgr["WakeupSessionManager<br/>唤醒会话路由"]
             XiaoAIConv["XiaoAIConversationController<br/>小爱连续对话"]
             SpeakerMgr["SpeakerManager"]
             Config["config.py<br/>before/after_wakeup"]
@@ -156,9 +153,10 @@ flowchart TB
 
         subgraph AIConnectors["AI 连接器（可选）"]
             direction LR
-            Xiaozhi["XiaoZhi<br/>小智协议客户端"]
             OpenclawMgr["OpenClawManager<br/>OpenClaw 网关客户端"]
             OpenclawConv["OpenClawConversation<br/>连续对话控制器"]
+            HAMgr["HomeAssistantManager<br/>Conversation API 客户端"]
+            HAConv["HomeAssistantConversation<br/>连续对话控制器"]
         end
 
         subgraph ServicesLayer["服务层（可选）"]
@@ -170,10 +168,10 @@ flowchart TB
 
     subgraph ExternalServices["☁️ 外部服务"]
         direction TB
-        XiaozhiServer["xiaozhi-esp32-server"]
         OpenclawGW["OpenClaw Gateway"]
+        HAServer["Home Assistant"]
         DoubaoTTS["豆包语音服务"]
-        XiaozhiServer ~~~ OpenclawGW ~~~ DoubaoTTS
+        OpenclawGW ~~~ HAServer ~~~ DoubaoTTS
     end
 
     subgraph APIClients["🌐 API 客户端"]
@@ -192,24 +190,15 @@ flowchart TB
     XiaoaiPy -->|"输入音频"| GlobalStream
     GlobalStream --> KWS
     GlobalStream --> VAD
-    GlobalStream --> Codec
 
     %% ===== 控制流 =====
     Config -->|"before/after_wakeup"| WakeupMgr
     MainApp -->|"初始化 / 主 loop"| WakeupMgr
-    MainApp -->|"device_state"| Codec
     MainApp -->|"device_state"| SpeakerMgr
     XiaoaiPy -->|"ASR / playing / AudioPlayer"| WakeupMgr
     XiaoaiPy -->|"AudioPlayer / playing"| XiaoAIConv
     KWS -->|"唤醒词"| WakeupMgr
     VAD -->|"speech / silence"| WakeupMgr
-
-    %% ===== 小智对话链路（可选） =====
-    WakeupMgr -->|"listen start / stop"| Xiaozhi
-    MainApp -->|"启动 / 回调接线"| Xiaozhi
-    Codec -->|"编码音频"| Xiaozhi
-    Xiaozhi -->|"TTS / STT / LLM"| MainApp
-    Xiaozhi <-->|"WebSocket"| XiaozhiServer
 
     %% ===== OpenClaw 链路（可选） =====
     MainApp -.->|"启动"| OpenclawMgr
@@ -221,9 +210,15 @@ flowchart TB
     OpenclawConv -.->|"发送消息"| OpenclawMgr
     OpenclawConv -.->|"播放回复"| TTSModule
 
+    %% ===== Home Assistant 链路（可选） =====
+    WakeupMgr -.->|"唤醒词路由"| HAConv
+    HAConv -.->|"接管原生 ASR / VAD 监听"| VAD
+    HAConv -.->|"提交语音指令"| HAMgr
+    HAMgr <-->|"HTTP<br/>/api/conversation/process"| HAServer
+    HAConv -.->|"小爱原生 TTS 播放"| SpeakerMgr
+
     %% ===== 播放回路 =====
     SpeakerMgr -->|"play()"| XiaoaiPy
-    Codec -->|"播放音频"| XiaoaiPy
 
     %% ===== 服务层 =====
     MainApp -.->|"启动"| APIServer
@@ -250,20 +245,19 @@ flowchart TB
     class Mic,Speaker,XiaoaiOS hardware
     class AudioCapture,WSServer rust
     class MainApp,WakeupMgr,XiaoAIConv,SpeakerMgr,Config,GlobalStream core
-    class VAD,KWS,ASR,Codec audio
-    class XiaoaiPy,Xiaozhi,OpenclawMgr,OpenclawConv connector
+    class VAD,KWS,ASR audio
+    class XiaoaiPy,OpenclawMgr,OpenclawConv,HAMgr,HAConv connector
     class APIServer,TTSModule api
-    class XiaozhiServer,OpenclawGW,DoubaoTTS,Curl,XiaoaiTTS external
+    class OpenclawGW,HAServer,DoubaoTTS,Curl,XiaoaiTTS external
 ```
 
 ### 工作流程
 
-**🎯 小智唤醒与对话**
+**🎯 唤醒与路由**
 
 ```
 麦克风 → client → server → XiaoAI → GlobalStream → KWS/小爱 ASR
-→ WakeupSessionManager → before_wakeup() → VAD speech/silence
-→ XiaoZhi start/stop listening → xiaozhi-esp32-server
+→ WakeupSessionManager → before_wakeup() → 返回 "openclaw" / "homeassistant" / None
 ```
 
 **🔄 小爱连续对话**
@@ -288,6 +282,14 @@ flowchart TB
 → local_asr: VAD 检测语音 → SherpaASR 离线识别 → OpenClaw → TTS 播放
 → xiaoai_asr: 静默唤醒小爱 → 接管小爱原生 ASR → OpenClaw → TTS 播放
 → 说"退出"/"再见"退出
+```
+
+**🏠 Home Assistant 连续对话**
+
+```
+唤醒词 "你好小p" → WakeupSessionManager → HomeAssistantConversationController
+→ 静默唤醒小爱 → 接管小爱原生 ASR → HA Conversation API → 小爱原生 TTS 播放
+→ 静音超时 / 说退出词 退出；HA 若返回 continue_conversation=True（自身追问）则继续等待一轮
 ```
 
 **🌐 远程控制**
@@ -343,136 +345,6 @@ curl -X POST http://localhost:9092/api/interrupt
 ```
 
 ***
-
-## 🔌 OpenAI 兼容服务
-
-用于接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等兼容 OpenAI Chat Completions 的服务。它是独立后端，不依赖 OpenClaw 协议。
-
-设置 `OPENAI_ENABLE=1` 启用。
-
-`config.py` 示例：
-
-```python
-"openai": {
-    "base_url": "http://127.0.0.1:8000/v1",
-    "api_key": "",
-    "model": "gpt-4o-mini",
-    "input_mode": "local_asr",  # 或 "xiaoai_asr"
-    "session_key": "default",
-    "system_prompt": "",
-    "temperature": 0.7,
-    "max_tokens": 512,
-    "history_max_messages": 20,
-    "tts_speaker": "xiaoai",
-}
-```
-
-触发连续对话时，在 `before_wakeup` 中返回 `"openai"`：
-
-```python
-async def before_wakeup(speaker, text, source, app):
-    if source == "kws" and "小黑" in text:
-        await speaker.play(text="小黑来了")
-        return "openai"
-
-    if source == "xiaoai" and text == "召唤小黑":
-        await speaker.abort_xiaoai()
-        return "openai"
-```
-
-单次发送并播报：
-
-```python
-if "让小黑" in text:
-    await speaker.abort_xiaoai()
-    await app.send_to_openai_and_play_reply(text.replace("让小黑", ""))
-    return None
-```
-
-`base_url` 可以直接填到 `/v1`，框架会自动调用 `/chat/completions`；如果你的服务已经给出完整 `/v1/chat/completions` 地址，也可以直接填写完整地址。连续对话会按 `session_key` 保存最近 `history_max_messages` 条上下文；需要隔离多个助手时，可在唤醒前调用 `app.set_openai_session_key("assistant-name")`。
-
-## 🐾 QwenPaw 集成
-
-用于接入阿里的 [QwenPaw](https://github.com/agentscope-ai/QwenPaw)。桥接器会调用 QwenPaw 的 HTTP Console 后台任务接口，将小爱音箱识别到的文本发送给指定 Agent，并把回复通过小爱或豆包 TTS 播放出来。
-
-推荐使用 Docker Compose 运行桥接器。先启动 QwenPaw（可在宿主机或同一 Docker 网络中运行），然后在 `docker-compose.yml` 中启用：
-
-```yaml
-services:
-  open-xiaoai-bridge:
-    environment:
-      - QWENPAW_ENABLE=1
-```
-
-修改完成后启动桥接器：
-
-```bash
-docker compose up -d
-```
-
-如果 QwenPaw 运行在宿主机，容器里的 `127.0.0.1` 指向容器自身，需将 `base_url` 改为宿主机可访问地址，例如宿主机局域网 IP：
-
-```python
-"qwenpaw": {
-    "base_url": "http://192.168.1.10:8088",
-    "agent_id": "default",
-    "session_key": "open-xiaoai-bridge",
-}
-```
-
-也可以按 [Docker 常见问题](#-docker) 使用 `network_mode: host`，此时可继续使用 `http://127.0.0.1:8088`。
-
-`config.py` 示例：
-
-```python
-"qwenpaw": {
-    "base_url": "http://127.0.0.1:8088",
-    "agent_id": "default",
-    "user_id": "open-xiaoai-bridge",
-    "input_mode": "local_asr",  # 或 "xiaoai_asr"
-    "session_key": "open-xiaoai-bridge",
-    "send_path": "/api/console/chat/task",
-    "task_status_path": "/api/console/chat/task/{task_id}",
-    "auth_token": "",
-    "tts_speaker": "xiaoai",
-}
-```
-
-触发连续对话时，在 `before_wakeup` 中返回 `"qwenpaw"`：
-
-```python
-async def before_wakeup(speaker, text, source, app):
-    if source == "kws" and "小爪" in text:
-        await speaker.play(text="小爪来了")
-        return "qwenpaw"
-
-    if source == "xiaoai" and text == "召唤小爪":
-        await speaker.abort_xiaoai()
-        return "qwenpaw"
-```
-
-单次发送并播报：
-
-```python
-if "让小爪" in text:
-    await speaker.abort_xiaoai()
-    await app.send_to_qwenpaw_and_play_reply(text.replace("让小爪", ""))
-    return None
-```
-
-`agent_id` 会通过 `X-Agent-Id` 请求头发送给 QwenPaw；`session_key` 对应 QwenPaw 请求里的 `session_id`，需要隔离多个对话时可在唤醒前调用 `app.set_qwenpaw_session_key("speaker-session")`。
-
-`auth_token` 是可选项，非空时程序默认会附带 `Authorization` 认证头，不需要额外配置 `auth_header` / `auth_scheme`。如果你的部署要求自定义认证头，可按需增加：
-
-```python
-"qwenpaw": {
-    "auth_header": "X-API-Key",
-    "auth_scheme": "",
-    "auth_token": "your-token",
-}
-```
-
-`auth_scheme` 设为空字符串时，请求头会直接发送 `auth_token` 原始值。
 
 ## 🦞 OpenClaw 集成
 
@@ -540,11 +412,10 @@ if "告诉龙虾" in text:
 ```python
 "wakeup": {
     "keywords": [
-        "你好小智",        # 中文
-        "小智小智",
         "hi openclaw",    # 英文（全小写）
         "你好龙虾",
         "龙虾你好",
+        "你好小p",         # 路由到 Home Assistant
     ],
 },
 ```
@@ -557,22 +428,19 @@ async def before_wakeup(speaker, text, source, app):
         if "龙虾" in text:
             await speaker.play(text="龙虾来了")
             return "openclaw"    # → OpenClaw 连续对话
-        if "小智" in text:
-            await speaker.play(text="小智来了")
-            return "xiaozhi"     # → 小智 AI
+        if "小p" in text:
+            await speaker.play(text="我来了")
+            return "homeassistant"  # → Home Assistant 连续对话
         return None              # → 不处理
 
     if source == "xiaoai":       # 小爱语音指令
         if text == "召唤龙虾":
             await speaker.abort_xiaoai()
             return "openclaw"
-        if text == "召唤小智":
-            await speaker.abort_xiaoai()
-            return "xiaozhi"
     # 返回 None → 交给小爱原生处理
 ```
 
-**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"openai"` → OpenAI 兼容服务连续对话，`"qwenpaw"` → QwenPaw 连续对话，`"xiaozhi"` → 小智 AI，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` / `app.send_to_openai()` / `app.send_to_qwenpaw()` 等方法）
+**返回值含义：** `"openclaw"` → OpenClaw 连续对话，`"homeassistant"` → Home Assistant 连续对话，`None` → 不处理（用户可自行调用 `app.send_to_openclaw()` 等方法）
 
 ### 🧠 多 Agent 路由 — 一个唤醒词，一个专属 Agent
 
@@ -632,8 +500,8 @@ async def after_wakeup(speaker, source=None, session_key=None):
             await speaker.play(text="管家，再见")
         else:
             await speaker.play(text="再见")
-    if source == "xiaozhi":
-        await speaker.play(text="小智，再见")
+    if source == "homeassistant":
+        await speaker.play(text="我先退下了")
 ```
 
 ### 📝 rule_prompt — 约束 Agent 输出格式
@@ -698,30 +566,60 @@ async def after_wakeup(speaker, source=None, session_key=None):
 
 ***
 
-## 🤖 小智 AI 集成
+## 🏠 Home Assistant 集成
 
-接入 [xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server)，使用小智 AI 的对话能力。
+通过 [Home Assistant](https://www.home-assistant.io/) 的 Conversation API，用小爱音箱语音控制智能家居。
 
-设置 `XIAOZHI_ENABLE=1` 启用
+**没有独立的环境变量开关**，在 `config.py` 中设置 `homeassistant.enabled = True` 即可启用（包括是否启动本地音频服务，也是读这个开关）。
 
 ### 配置
 
 ```python
 APP_CONFIG = {
-    "xiaozhi": {
-        "OTA_URL": "http://127.0.0.1:8003/xiaozhi/ota/",
-        "WEBSOCKET_URL": "ws://127.0.0.1:8000/xiaozhi/v1/",
-        "WEBSOCKET_ACCESS_TOKEN": "",  # 可选
-        # "DEVICE_ID": "",  # 可选，默认自动生成
+    "homeassistant": {
+        "enabled": True,
+        "base_url": "http://192.168.1.10:8123",
+        "token": "你的 HA Long-Lived Access Token",
+        # 留空则使用 HA 默认 Agent，例如 "conversation.home_assistant"
+        "agent_id": "",
+        # xiaoai_asr（默认）：接管小爱原生 ASR；local_asr：本地 VAD + SherpaASR
+        "input_mode": "xiaoai_asr",
+        "response_timeout": 120,
+        # 等待小爱原生 ASR 的超时时间
+        "timeout": 30,
+        # 是否保持 HA 的 conversation_id（跨轮次记忆上下文）
+        "keep_conversation": True,
+        # 是否开启连续对话，见下方说明
+        "continuous_conversation": True,
+        "session_key": "homeassistant:open-xiaoai-bridge",
+        "language": "zh-CN",
+        "exit_keywords": ["退出", "停止", "再见", "退下", "结束对话"],
+        # TTS：当前只支持小爱原生 TTS
+        "tts_speaker": "xiaoai",
+        "intro_prompt": "",          # 进入对话时的提示语，留空不播放
+        "exit_prompt": "好的，再见",
+        "rule_prompt": "注意：这是通过小爱音箱进行的语音对话，请直接返回适合语音播报的纯文字内容，不要使用 Markdown、代码块或特殊格式，回答尽量简洁。",
     },
 }
 ```
 
-### 使用
+触发方式与 OpenClaw 一致，在 `before_wakeup` 中返回 `"homeassistant"` 即进入连续对话，见[自定义唤醒词](#-自定义唤醒词)章节。
 
-唤醒词触发后，`before_wakeup` 返回 `"xiaozhi"` 即进入小智对话流程。
+### 💬 连续对话开关
 
-详见[自定义唤醒词](#-自定义唤醒词)章节。
+`homeassistant.continuous_conversation` 控制唤醒一次后能否连续下达多条指令：
+
+| 值 | 效果 |
+|----|------|
+| `True`（默认） | 唤醒一次可连续说多条指令（"打开客厅灯" → "再打开卧室灯"），直到静音超过 `timeout` 秒或说出 `exit_keywords` 才结束 |
+| `False` | 每次唤醒只执行一条指令就结束（更接近传统"一次唤醒一次命令"体验） |
+
+> ⚠️ **`continue_conversation` 不是这个开关**：HA 响应里也有一个同名字段，但那是 HA 自己判断"是否需要追问一句"的信号（比如设置计时器缺少时长），语义完全不同——普通指令执行完 HA 几乎总是返回 `false`。即使 `continuous_conversation` 设为 `False`，如果 HA 确实返回了 `continue_conversation: true`（它在等你回答追问），程序仍会等一轮，不会打断 HA 自己的澄清流程。
+
+### 🎙️ 输入模式
+
+- `xiaoai_asr`（默认，推荐）：唤醒小爱后接管其原生 ASR 结果发给 HA，不需要本地 ASR 模型
+- `local_asr`：目前尚未完整支持（`HomeAssistantManager` 还没实现该模式所需的方法），暂时请使用 `xiaoai_asr`
 
 ***
 
@@ -729,13 +627,13 @@ APP_CONFIG = {
 
 ### 🐳 Docker
 
-1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw？**
+1. **在容器里如何通过 `127.0.0.1` 直连宿主机上的 OpenClaw / Home Assistant？**
 
     默认 `docker-compose.yml` 已经去掉了 `network_mode: host`，不需要再额外修改这一行。
 
     需要注意：桥接模式下，容器里的 `127.0.0.1` / `localhost` 指向的是**容器自己**，不是宿主机。
 
-    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw / QwenPaw，使用 **方式 1**:
+    如果你希望通过 `127.0.0.1` 直连宿主机上的 OpenClaw / Home Assistant，使用 **方式 1**:
 
     **方式 1：增加 `network_mode: host`**
 
@@ -749,7 +647,7 @@ APP_CONFIG = {
 
     **方式 2：通过网络 IP 连接（无需 host 模式）**
 
-    如果不使用 `network_mode: host`，可以让 OpenClaw / QwenPaw 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
+    如果不使用 `network_mode: host`，可以让 OpenClaw / Home Assistant 监听 LAN，然后在容器里通过宿主机的局域网 IP 连接：
 
     可以直接一起改成下面这样：
 
@@ -783,14 +681,14 @@ APP_CONFIG = {
 
 1. **模型文件在哪下载？**
 
-    小智 AI 和 `local_asr` 模式需要 `VAD + KWS + ASR` 模型文件。  
+    `local_asr` 模式需要 `VAD + KWS + ASR` 模型文件。
     `xiaoai_asr` 模式只需要 `VAD + KWS`。
 
     详见[快速开始 - Docker Compose](#-docker-compose推荐) 或 [本地编译](#-本地编译) 章节。
 
 2. **如何切换 ASR 语音识别模型？**
 
-    仅 `openclaw.input_mode = "local_asr"` 时，ASR 配置才会生效。在 `config.py` 中配置：
+    仅 `openclaw.input_mode = "local_asr"` 时，ASR 配置才会生效（Home Assistant 目前只支持 `xiaoai_asr`）。在 `config.py` 中配置：
 
     ```python
     APP_CONFIG = {
@@ -844,7 +742,7 @@ APP_CONFIG = {
 
 3. **如何打断 AI 的回答？**
 
-    直接喊"小爱同学"即可打断小智或 OpenClaw 的回答。
+    直接喊"小爱同学"即可打断 OpenClaw 或 Home Assistant 的回答。
 
 4. **话没说完 AI 就开始回答？**
 
@@ -862,7 +760,7 @@ APP_CONFIG = {
 
     - 调低 `vad.threshold`（越小越灵敏，如 `0.05`）
     - 启动后需等约 30s 加载模型
-    - 英文唤醒词用空格分开（如 `"open ai"`）
+    - 英文唤醒词用空格分开（如 `"hi openclaw"`）
     - 换更易识别的唤醒词
 
 6. **麦克风音量太小，唤醒词 / ASR 识别不准？**
@@ -986,34 +884,23 @@ APP_CONFIG = {
     - `send_to_openclaw(text, wait_response=True)` → 成功返回回复文本，超时/失败返回 `None`
     - `send_to_openclaw_and_play_reply(text)` → 同上，但会自动 TTS 播放回复
 
-### 🤖 小智 AI
+### 🏠 Home Assistant
 
-1. **第一次运行提示验证码绑定设备？**
+1. **Long-Lived Access Token 在哪里生成？**
 
-    打开小智 AI [管理后台](https://xiaozhi.me/)，根据提示创建 Agent 绑定设备。验证码会在终端打印或写入 `config.py`：
+    HA 后台 → 点击左下角用户头像 → 拉到最下方"长期访问令牌" → 创建令牌，复制后填入 `config.py` 的 `homeassistant.token`。
 
-    ```python
-    APP_CONFIG = {
-        "xiaozhi": {
-            "VERIFICATION_CODE": "首次登录时，验证码会在这里更新",
-        },
-    }
-    ```
+2. **`agent_id` 应该填什么？**
 
-    绑定成功后可能需要重启应用。
+    留空使用 HA 的默认 Agent。如果你配置了多个 Conversation Agent（比如接了 Ollama/Qwen 的对话代理），在 HA 里找到对应实体 ID（形如 `conversation.xxx`）填进去。
 
-2. **怎样使用自己部署的 xiaozhi-esp32-server？**
+3. **说完一句指令就退出了，怎么连续下命令？**
 
-    修改 `config.py` 中的接口地址：
+    检查 `homeassistant.continuous_conversation` 是否为 `True`（默认就是）。如果已经是 `True` 还是只执行一轮，可能是升级前的旧版本——旧实现曾错误地直接用 HA 响应里的 `continue_conversation` 字段判断是否继续，而这个字段绝大多数情况下都是 `false`（见上方[连续对话开关](#-连续对话开关)说明）。
 
-    ```python
-    APP_CONFIG = {
-        "xiaozhi": {
-            "OTA_URL": "https://your-server/xiaozhi/ota/",
-            "WEBSOCKET_URL": "wss://your-server/xiaozhi/v1/",
-        },
-    }
-    ```
+4. **HA 一直没反应 / 超时？**
+
+    检查 `base_url` 是否是桥接器容器/进程能访问到的地址（Docker 部署时不能用 `127.0.0.1` 指代宿主机，参考 [Docker 常见问题](#-docker)），以及 `token` 是否过期。也可以调大 `homeassistant.response_timeout`。
 
 ### 🎵 豆包 TTS
 
@@ -1046,7 +933,7 @@ APP_CONFIG = {
    4. **重要**：确保复刻音色与 `tts.doubao.app_id` 属于**同一个火山引擎项目**，否则无法使用。
 3. **如何将指定文本转成特定音色的音频文件？**
 
-   可以使用脚本 [scripts/generate\_tts.py](/Users/zc/projects/open-xiaoai-bridge/scripts/generate_tts.py)：
+   可以使用脚本 [scripts/generate_tts.py](scripts/generate_tts.py)：
    ```bash
    python3 scripts/generate_tts.py \
      --speaker-id zh_male_lengkugege_emo_v2_mars_bigtts \

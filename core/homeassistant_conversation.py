@@ -112,7 +112,8 @@ class HomeAssistantConversationController(
         """
         Home Assistant response -> XiaoAI TTS.
 
-        Do not use OpenClaw/OpenAI/QwenPaw TTS.
+        Always uses XiaoAI's native TTS, regardless of what OpenClaw's
+        tts_speaker/doubao TTS config is set to.
         """
 
         if not response:

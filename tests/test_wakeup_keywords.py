@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class WakeupKeywordStartupTest(unittest.TestCase):
-    def test_keyword_generation_enabled_for_openai(self):
+    def test_keyword_generation_enabled_for_openclaw(self):
         spec = importlib.util.spec_from_file_location(
             "kws_keywords_for_test",
             ROOT / "core/services/audio/kws/keywords.py",
@@ -22,31 +22,118 @@ class WakeupKeywordStartupTest(unittest.TestCase):
         keywords = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(keywords)
 
-        with mock.patch.dict(
-            os.environ,
-            {
-                "XIAOZHI_ENABLE": "",
-                "OPENCLAW_ENABLE": "",
-                "OPENCLAW_ENABLED": "",
-                "OPENAI_ENABLE": "1",
-            },
-            clear=False,
+        class ConfigManagerStub:
+            @classmethod
+            def instance(cls):
+                return cls()
+
+            def get_app_config(self, path=None, default=None):
+                if path == "homeassistant.enabled":
+                    return False
+                return default
+
+        with (
+            mock.patch.object(keywords, "ConfigManager", ConfigManagerStub),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "OPENCLAW_ENABLE": "1",
+                    "OPENCLAW_ENABLED": "",
+                },
+                clear=False,
+            ),
         ):
             should_run, reason = keywords.should_generate_keywords()
 
         self.assertTrue(should_run)
         self.assertEqual(reason, "")
 
-    def test_startup_entrypoints_prepare_keywords_for_openai(self):
+    def test_keyword_generation_enabled_for_homeassistant(self):
+        """Home Assistant has no env var flag — should_generate_keywords()
+        must read homeassistant.enabled from config.py directly, or a
+        'Home Assistant only' setup would never get a keywords.txt."""
+        spec = importlib.util.spec_from_file_location(
+            "kws_keywords_for_test",
+            ROOT / "core/services/audio/kws/keywords.py",
+        )
+        keywords = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(keywords)
+
+        class ConfigManagerStub:
+            @classmethod
+            def instance(cls):
+                return cls()
+
+            def get_app_config(self, path=None, default=None):
+                if path == "homeassistant.enabled":
+                    return True
+                return default
+
+        with (
+            mock.patch.object(keywords, "ConfigManager", ConfigManagerStub),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "OPENCLAW_ENABLE": "",
+                    "OPENCLAW_ENABLED": "",
+                },
+                clear=False,
+            ),
+        ):
+            should_run, reason = keywords.should_generate_keywords()
+
+        self.assertTrue(should_run)
+        self.assertEqual(reason, "")
+
+    def test_keyword_generation_disabled_when_both_off(self):
+        spec = importlib.util.spec_from_file_location(
+            "kws_keywords_for_test",
+            ROOT / "core/services/audio/kws/keywords.py",
+        )
+        keywords = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(keywords)
+
+        class ConfigManagerStub:
+            @classmethod
+            def instance(cls):
+                return cls()
+
+            def get_app_config(self, path=None, default=None):
+                if path == "homeassistant.enabled":
+                    return False
+                return default
+
+        with (
+            mock.patch.object(keywords, "ConfigManager", ConfigManagerStub),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "OPENCLAW_ENABLE": "",
+                    "OPENCLAW_ENABLED": "",
+                },
+                clear=False,
+            ),
+        ):
+            should_run, _reason = keywords.should_generate_keywords()
+
+        self.assertFalse(should_run)
+
+    def test_startup_entrypoints_prepare_keywords_for_openclaw_and_homeassistant(self):
         start_sh = (ROOT / "scripts/start.sh").read_text(encoding="utf8")
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf8")
 
-        self.assertIn("OPENAI_ENABLE_VALUE", start_sh)
-        self.assertIn("QWENPAW_ENABLE_VALUE", start_sh)
-        self.assertIn('[[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
-        self.assertIn('[[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
-        self.assertIn('${OPENAI_ENABLE:-}', dockerfile)
-        self.assertIn('${QWENPAW_ENABLE:-}', dockerfile)
+        self.assertIn("OPENCLAW_ENABLE_VALUE", start_sh)
+        self.assertIn("HOMEASSISTANT_ENABLED", start_sh)
+        self.assertIn('[[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
+        self.assertIn('[[ "$HOMEASSISTANT_ENABLED" == "true" ]]', start_sh)
+        self.assertIn("homeassistant", start_sh)
+        # No leftover XiaoZhi/OpenAI/QwenPaw gating in either entrypoint.
+        self.assertNotIn("XIAOZHI_ENABLE", start_sh)
+        self.assertNotIn("OPENAI_ENABLE", start_sh)
+        self.assertNotIn("QWENPAW_ENABLE", start_sh)
+        self.assertNotIn("XIAOZHI_ENABLE", dockerfile)
+        self.assertNotIn("OPENAI_ENABLE", dockerfile)
+        self.assertNotIn("QWENPAW_ENABLE", dockerfile)
         self.assertIn('python core/services/audio/kws/keywords.py', dockerfile)
 
 

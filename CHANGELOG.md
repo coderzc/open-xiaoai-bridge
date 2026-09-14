@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased (branch: feature/openclaw-homeassistant-only)
+
+### 重点更新
+
+- 移除 XiaoZhi AI、OpenAI 兼容服务、QwenPaw 三个外部对话后端及全部相关代码/配置/文档，项目现在只保留 **OpenClaw** 和 **Home Assistant** 两条链路。
+- 新增 Home Assistant 连续对话开关 `homeassistant.continuous_conversation`：修复了此前连续对话被错误地绑定到 HA 响应 `continue_conversation` 字段上、导致每次唤醒执行完一条指令就退出的问题。
+
+### 修复与优化
+
+- 修复 Home Assistant 无环境变量开关（纯 `config.py` 驱动）导致的多处遗漏：只开 Home Assistant、关闭 OpenClaw 时，VAD/KWS 音频服务和 `keywords.txt` 唤醒词文件此前都不会生成。
+- 清理 `ConfigManager` 中仅服务于已移除 XiaoZhi ESP32 OTA/MQTT 模拟的死代码。
+- 删除 `testconfig.py`（HA 功能提交时遗留的旧版 `config.py` 备份，未被任何代码引用）。
+
 ## v1.0.7 - 2026-07-14
 
 ### 重点更新
