@@ -1,0 +1,41 @@
+diff --git a/core/homeassistant.py b/core/homeassistant.py
+index a66d10f..2a27ab2 100644
+--- a/core/homeassistant.py
++++ b/core/homeassistant.py
+@@ -307,14 +307,12 @@ class HomeAssistantManager:
+         )
+ 
+         logger.info(
+-            "[HomeAssistant] Request: %s",
+-            original_text,
++            f"[HomeAssistant] Request: {original_text}",
+             module="HomeAssistant",
+         )
+ 
+         logger.debug(
+-            "[HomeAssistant] Payload: %s",
+-            payload,
++            f"[HomeAssistant] Payload: {payload}",
+             module="HomeAssistant",
+         )
+ 
+@@ -423,16 +421,13 @@ class HomeAssistantManager:
+         self.last_response = answer
+ 
+         logger.info(
+-            "[HomeAssistant] Response: %s",
+-            answer,
++            f"[HomeAssistant] Response: {answer}",
+             module="HomeAssistant",
+         )
+ 
+         logger.debug(
+-            "[HomeAssistant] conversation_id=%s, "
+-            "continue_conversation=%s",
+-            self.conversation_id,
+-            self.continue_conversation,
++            f"[HomeAssistant] conversation_id={self.conversation_id}, "
++            f"continue_conversation={self.continue_conversation}",
+             module="HomeAssistant",
+         )
+ 
