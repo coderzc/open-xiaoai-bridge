@@ -22,31 +22,31 @@ from core.utils.logger import logger
 
 
 def should_generate_keywords():
-    """Return whether keyword generation should run."""
+    """Return whether keyword generation should run.
+
+    OpenClaw is gated by an env var (OPENCLAW_ENABLE/OPENCLAW_ENABLED).
+    Home Assistant has no env var — it is enabled purely via
+    config.py's homeassistant.enabled — so it must be checked
+    directly against the config here, or a "Home Assistant only"
+    setup would silently never get a keywords.txt generated and its
+    custom wake words would never fire.
+    """
     import os
 
-    xiaozhi_enabled = os.environ.get("XIAOZHI_ENABLE", "").lower() in ("1", "true", "yes")
     # 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
     openclaw_env = os.environ.get("OPENCLAW_ENABLE") or os.environ.get("OPENCLAW_ENABLED") or ""
     openclaw_enabled = openclaw_env.lower() in ("1", "true", "yes")
-    openai_enabled = os.environ.get("OPENAI_ENABLE", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    qwenpaw_enabled = os.environ.get("QWENPAW_ENABLE", "").lower() in (
-        "1",
-        "true",
-        "yes",
+
+    homeassistant_enabled = bool(
+        ConfigManager.instance().get_app_config("homeassistant.enabled", False)
     )
 
-    if (
-        not xiaozhi_enabled
-        and not openclaw_enabled
-        and not openai_enabled
-        and not qwenpaw_enabled
-    ):
-        return False, "XIAOZHI_ENABLE, OPENCLAW_ENABLE/OPENCLAW_ENABLED, OPENAI_ENABLE and QWENPAW_ENABLE are all disabled"
+    if not openclaw_enabled and not homeassistant_enabled:
+        return (
+            False,
+            "OPENCLAW_ENABLE/OPENCLAW_ENABLED is disabled and "
+            "homeassistant.enabled is False in config.py",
+        )
 
     return True, ""
 

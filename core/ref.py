@@ -13,14 +13,6 @@ def get_app() -> Any:
     return GLOBAL_STATES.get("app")
 
 
-def set_xiaozhi(xiaozhi: Any):
-    GLOBAL_STATES["xiaozhi"] = xiaozhi
-
-
-def get_xiaozhi() -> Any:
-    return GLOBAL_STATES.get("xiaozhi")
-
-
 def set_xiaoai(xiaoai: Any):
     GLOBAL_STATES["xiaoai"] = xiaoai
 
@@ -35,14 +27,6 @@ def set_vad(vad: Any):
 
 def get_vad() -> Any:
     return GLOBAL_STATES.get("vad")
-
-
-def set_audio_codec(opus_encoder: Any):
-    GLOBAL_STATES["opus_encoder"] = opus_encoder
-
-
-def get_audio_codec() -> Any:
-    return GLOBAL_STATES.get("opus_encoder")
 
 
 def get_speaker() -> Any:
@@ -61,9 +45,4 @@ def get_kws() -> Any:
     return GLOBAL_STATES.get("kws")
 
 
-def set_speech_frames(speech_frames: Any):
-    GLOBAL_STATES["speech_frames"] = speech_frames
 
-
-def get_speech_frames() -> Any:
-    return GLOBAL_STATES.get("speech_frames")

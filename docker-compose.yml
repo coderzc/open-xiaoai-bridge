@@ -10,8 +10,8 @@ services:
       - API_SERVER_ENABLE=1 # 启用 HTTP API 服务（可选）
       - API_SERVER_HOST=0.0.0.0 # HTTP API 服务监听地址（默认监听 127.0.0.1）
       - OPENCLAW_ENABLE=1       # 启用 OpenClaw（兼容旧值 OPENCLAW_ENABLED）
-      # - QWENPAW_ENABLE=1       # 启用 QwenPaw（可选）
-      # - XIAOZHI_ENABLE=1       # 启用小智 AI（可选）
+      # Home Assistant 没有环境变量开关，完全由 config.py 中的
+      # homeassistant.enabled 控制（见下方挂载的 config.py）
     volumes:
       - ./config.py:/app/config.py
       - ./openclaw:/app/openclaw

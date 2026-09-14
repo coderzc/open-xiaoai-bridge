@@ -20,11 +20,8 @@ echo -e "${GREEN}  Open-XiaoAI Bridge 启动脚本${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-XIAOZHI_ENABLED=$(printf '%s' "${XIAOZHI_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
 # 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
 OPENCLAW_ENABLE_VALUE=$(printf '%s' "${OPENCLAW_ENABLE:-${OPENCLAW_ENABLED:-}}" | tr '[:upper:]' '[:lower:]')
-OPENAI_ENABLE_VALUE=$(printf '%s' "${OPENAI_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
-QWENPAW_ENABLE_VALUE=$(printf '%s' "${QWENPAW_ENABLE:-}" | tr '[:upper:]' '[:lower:]')
 
 # 1. 检查 uv
 if ! command -v uv &> /dev/null; then
@@ -51,8 +48,24 @@ fi
 ONNX_LIB_DIR="$(uv run python -c "from pathlib import Path; import onnxruntime; print(Path(onnxruntime.__file__).parent / 'capi')" 2>/dev/null)" && \
     export DYLD_LIBRARY_PATH="${ONNX_LIB_DIR}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 
+# Home Assistant 没有环境变量开关，完全由 config.py 的 homeassistant.enabled 控制
+HOMEASSISTANT_ENABLED=$(uv run python -c "
+import sys
+sys.path.insert(0, '.')
+try:
+    from core.utils.config_loader import load_config_module
+    config_module = load_config_module()
+    APP_CONFIG = getattr(config_module, 'APP_CONFIG', {})
+except Exception:
+    try:
+        from config import APP_CONFIG
+    except ImportError:
+        APP_CONFIG = {}
+print('true' if APP_CONFIG.get('homeassistant', {}).get('enabled', False) else 'false')
+" 2>/dev/null || echo "false")
+
 # 3. 检查 KWS 相关模型和关键词文件
-if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]; then
+if [[ "$OPENCLAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]] || [[ "$HOMEASSISTANT_ENABLED" == "true" ]]; then
     MODEL_DIR="core/models"
     REQUIRED_MODELS=("silero_vad.onnx" "encoder.onnx" "decoder.onnx" "joiner.onnx" "tokens.txt" "bpe.model")
     MISSING_MODELS=()
@@ -142,7 +155,7 @@ if [[ "$XIAOZHI_ENABLED" =~ ^(1|true|yes)$ ]] || [[ "$OPENCLAW_ENABLE_VALUE" =~ 
         exit 1
     fi
 else
-    echo -e "${YELLOW}⚠ 小智、OpenClaw、OpenAI 和 QwenPaw 均未启用，跳过模型检查和关键词预生成${NC}"
+    echo -e "${YELLOW}⚠ OpenClaw 和 Home Assistant 均未启用，跳过模型检查和关键词预生成${NC}"
 fi
 
 # 4. 检查配置

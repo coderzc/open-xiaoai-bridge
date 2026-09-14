@@ -60,6 +60,10 @@ ENV LD_LIBRARY_PATH=/app/.venv/lib/python3.12/site-packages/onnxruntime/capi
 # 暴露 API 服务器端口
 EXPOSE 9092
 
-# 先初始化关键词模型（小智或外部后端启用时），然后启动主程序
-# 兼容 OPENCLAW_ENABLE (新) 和 OPENCLAW_ENABLED (旧)
-CMD ["/bin/bash", "-c", "source /app/.venv/bin/activate && OPENCLAW_VAL=\"${OPENCLAW_ENABLE:-${OPENCLAW_ENABLED:-}}\"; if [[ \"${XIAOZHI_ENABLE:-}\" =~ ^(1|true|yes)$ ]] || [[ \"$OPENCLAW_VAL\" =~ ^(1|true|yes)$ ]] || [[ \"${OPENAI_ENABLE:-}\" =~ ^(1|true|yes)$ ]] || [[ \"${QWENPAW_ENABLE:-}\" =~ ^(1|true|yes)$ ]]; then python core/services/audio/kws/keywords.py; fi && python main.py"]
+# 初始化关键词模型（OpenClaw 或 Home Assistant 启用时），然后启动主程序
+#
+# 是否需要生成的判断逻辑统一放在 keywords.py 的 should_generate_keywords()
+# 里维护（OpenClaw 走 OPENCLAW_ENABLE/OPENCLAW_ENABLED 环境变量，
+# Home Assistant 走 config.py 的 homeassistant.enabled），这里不再重复
+# 一份容易失配的 bash 判断。
+CMD ["/bin/bash", "-c", "source /app/.venv/bin/activate && python core/services/audio/kws/keywords.py && python main.py"]

@@ -26,14 +26,12 @@ async def before_wakeup(speaker, text, source, app):
         source  : 唤醒来源
                     'kws'    — 本地关键词唤醒（用户说了唤醒词）
                     'xiaoai' — 小爱同学收到用户语音指令
-        app     : MainApp 实例，可调用 send_to_openclaw / send_to_openai / send_to_qwenpaw 等方法
+        app     : MainApp 实例，可调用 send_to_openclaw 等方法
 
     返回值：
-        "openclaw" — 进入 OpenClaw 连续对话流程
-        "openai"   — 进入 OpenAI 兼容服务连续对话流程（例如 Hermes Agent API Server）
-        "qwenpaw"  — 进入 QwenPaw 连续对话流程
-        "xiaozhi"  — 进入小智 AI 流程
-        None       — 不做额外处理（可在此自行调用 app.send_to_openclaw 等）
+        "openclaw"      — 进入 OpenClaw 连续对话流程
+        "homeassistant" — 进入 Home Assistant 连续对话流程
+        None            — 不做额外处理（可在此自行调用 app.send_to_openclaw 等）
 
     ---
     动态切换 session_key：
@@ -71,17 +69,10 @@ async def before_wakeup(speaker, text, source, app):
             await speaker.play(text="龙虾来了")
             return "openclaw"
 
-        if "小黑" in text:
-            await speaker.play(text="小黑来了")
-            return "openai"
-
-        if "小爪" in text:
-            await speaker.play(text="小爪来了")
-            return "qwenpaw"
-
-        if "小智" in text:
-            await speaker.play(text="小智来了")
-            return "xiaozhi"
+        # Route to Home Assistant by wake word
+        if "小▁p" in text:
+            await speaker.play(text="我来了")
+            return "homeassistant"
 
         return None
 
@@ -91,56 +82,18 @@ async def before_wakeup(speaker, text, source, app):
         #     app.set_openclaw_session_key("agent:xiaomei:open-xiaoai-bridge")
         #     await speaker.abort_xiaoai()
         #     return "openclaw"
-
-        if text == "召唤龙虾":
-            await speaker.abort_xiaoai()
-            return "openclaw"  # OpenClaw continuous conversation
-
-        if text == "召唤小黑":
-            await speaker.abort_xiaoai()
-            return "openai"  # OpenAI-compatible service continuous conversation
-
-        if text == "召唤小爪":
-            await speaker.abort_xiaoai()
-            return "qwenpaw"  # QwenPaw continuous conversation
-
-        if text == "召唤小智":
-            await speaker.abort_xiaoai()
-            return "xiaozhi"  # XiaoZhi AI
-
-        if "让龙虾" in text:
-            await speaker.abort_xiaoai()
-            # One-shot: send to OpenClaw and play the reply via TTS
-            await app.send_to_openclaw_and_play_reply(text.replace("让龙虾", ""))
-            return None  # No further handling by the framework
-
-        if "告诉龙虾" in text:
-            await speaker.abort_xiaoai()
-            # Fire-and-forget: let the Agent decide when/how to reply
-            await app.send_to_openclaw(text.replace("告诉龙虾", ""))
-            return None
-
-        if "让小黑" in text:
-            await speaker.abort_xiaoai()
-            await app.send_to_openai_and_play_reply(text.replace("让小黑", ""))
-            return None
-
-        if "让小爪" in text:
-            await speaker.abort_xiaoai()
-            await app.send_to_qwenpaw_and_play_reply(text.replace("让小爪", ""))
-            return None
-
-
+      #  await speaker.play(text="我来了，请问有什么需要帮忙的吗？")
+        await speaker.abort_xiaoai()
+        return None
+        
 async def after_wakeup(speaker, source=None, session_key=None):
     """
     退出唤醒状态
 
     - source: 退出来源
-        - 'xiaozhi': 小智对话超时退出
         - 'openclaw': OpenClaw 连续对话退出
-        - 'openai': OpenAI 兼容服务连续对话退出
-        - 'qwenpaw': QwenPaw 连续对话退出
-    - session_key: 当前 OpenClaw/OpenAI/QwenPaw 后端 session_key
+        - 'homeassistant': Home Assistant 连续对话退出
+    - session_key: 当前 OpenClaw 后端 session_key
         可据此区分是哪个 Agent 退出，例如播放不同的退出提示语
     """
     if source == "openclaw":
@@ -159,26 +112,20 @@ async def after_wakeup(speaker, source=None, session_key=None):
         # else:
         #     await speaker.play(text="再见")
         await speaker.play(text="龙虾，再见")
-    if source == "openai":
-        await speaker.play(text="小黑，再见")
-    if source == "qwenpaw":
-        await speaker.play(text="小爪，再见")
-    if source == "xiaozhi":
-        await speaker.play(text="小智，再见")
+    if source == "homeassistant":
+        await speaker.play(text="我先退下了")
+           
 
 APP_CONFIG = {
     "wakeup": {
         # 自定义唤醒词列表（英文字母要全小写）
         "keywords": [
-            "你好小智",
-            "小智小智",
             "hi open claw",
             "你好龙虾",
             "龙虾你好",
-            "你好小黑",
-            "小黑你好",
-            "你好小爪",
-            "小爪你好",
+            "你好小p",
+            "小p你好",
+            "小p",
         ],
         # 静音多久后自动退出唤醒（秒）
         "timeout": 20,
@@ -233,13 +180,6 @@ APP_CONFIG = {
             "poll_interval": 0.5,
             "max_wait_seconds": 20,
         },
-    },
-    "xiaozhi": {
-        "OTA_URL": "http://127.0.0.1:8003/xiaozhi/ota/",
-        "WEBSOCKET_URL": "ws://127.0.0.1:8000/xiaozhi/v1/",
-        "WEBSOCKET_ACCESS_TOKEN": "", #（可选）一般用不到这个值
-        "DEVICE_ID": "", #（可选）默认自动生成
-        "VERIFICATION_CODE": "", # 首次登陆时，验证码会在这里更新
     },
     "xiaoai": {
         "continuous_conversation_mode": True,
@@ -298,66 +238,129 @@ APP_CONFIG = {
         #   - 告诉 Agent 需要调用 xiaoai-tts skill 来播报，因为服务端不会自动播放
         "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字，调用 `xiaoai-tts` skill 播报出来。字数控制在300字以内"
     },
-    # OpenAI-compatible Service Configuration
-    # 可接入 Hermes Agent API Server、OpenAI、Ollama、LM Studio 等兼容 /v1/chat/completions 的服务
-    "openai": {
-        "base_url": "http://127.0.0.1:8000/v1",
-        "api_key": "",
-        "model": "gpt-4o-mini",
-        # 输入模式：
-        #   - "local_asr": 使用本地 VAD + SherpaASR
-        #   - "xiaoai_asr": 接管小爱原生 ASR 结果
-        "input_mode": "local_asr",
-        # session_key 统一采用 agent:<agentId>:<rest> 格式，便于 after_wakeup 解析
-        "session_key": "agent:default:open-xiaoai-bridge",
-        # 可选：把 session_key 作为请求头发给服务端，用于服务端长期记忆作用域。
-        # 默认设为 Hermes 的 "X-Hermes-Session-Key"；它只用于长期记忆作用域，
-        # chat/completions 仍是无状态（历史仍由 messages 携带），不会重复。
-        # 接标准 OpenAI/Ollama/LM Studio 时该头会被忽略（无害），如需彻底关闭可留空。
-        "session_header": "X-Hermes-Session-Key",
-        "system_prompt": "",
-        "temperature": 0.7,
-        "max_tokens": 512,
-        "history_max_messages": 20,
+    # Home Assistant Configuration
+    "homeassistant": {
+        # 是否启用
+        #
+        # 注意：Home Assistant 没有独立的环境变量开关（不同于
+        # OPENCLAW_ENABLE），完全由这里的 enabled 值控制，
+        # 包括是否启动本地 VAD/KWS 音频服务。
+        "enabled": False,
+
+        # Home Assistant 地址
+        "base_url": "http://192.168.100.80:8123",
+
+        # Home Assistant Long-Lived Access Token
+        "token": "Home Assistant Long-Lived Access Token",
+
+        # Conversation Agent
+        #
+        # 例如：
+        # conversation.home_assistant
+        # conversation.qwen
+        #
+        # 留空则使用 HA 默认 Agent
+        "agent_id": "conversation.ollama_conversation",
+
+        # 输入模式
+        #
+        # local_asr:
+        #     本地 VAD + ASR
+        #
+        # xiaoai_asr:
+        #     使用小爱原生 ASR
+        "input_mode": "xiaoai_asr",
+
+        # HTTP 请求超时时间
         "response_timeout": 120,
+
+        # 等待小爱原生 ASR 的超时时间
+        "timeout": 30,
+
+        # 是否保持 Home Assistant conversation_id
+        "keep_conversation": True,
+
+        # 是否开启连续对话
+        #
+        # True（默认）：
+        #     唤醒一次后可连续下达多条指令
+        #     （例如"打开客厅灯" -> "再打开卧室灯" -> "调到50%亮度"），
+        #     直到静音超过 timeout 秒，或说出 exit_keywords
+        #     中的退出词才结束对话。
+        #
+        # False：
+        #     每次唤醒只执行一条指令就结束对话
+        #     （更接近"一次唤醒一次命令"的传统语音助手体验）。
+        #     注意：即使关闭，如果 HA 的 Agent 自身需要追问
+        #     （例如设置计时器时缺少时长，返回了
+        #     continue_conversation=True），仍会等待一轮
+        #     用户回答，不会打断 HA 自己的澄清流程。
+        "continuous_conversation": True,
+
+        # 本地 session 标识
+        "session_key": "homeassistant:open-xiaoai-bridge",
+
+        # Home Assistant Conversation 参数
+        "language": "zh-CN",
+
+        # 连续对话退出关键词
+        "exit_keywords": [
+            "退出",
+            "停止",
+            "再见",
+            "滚",
+            "退下",
+            "结束对话",
+        ],
+
+        # TTS
+        #
+        # 当前实现：
+        # xiaoai = 使用小爱原生 TTS
         "tts_speed": 1.0,
         "tts_speaker": "xiaoai",
-        "session_tts_speakers": {},
-        "exit_keywords": ["退出", "停止", "再见"],
-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
-        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送的，他看不到你回复的文字。字数控制在300字以内",
-        "extra_body": {},
-    },
-    # QwenPaw Configuration
-    # 需先启动 QwenPaw: qwenpaw app
-    "qwenpaw": {
-        "base_url": "http://127.0.0.1:8088",
-        # agent_id 仅作为回退：当 session_key 不含 agentId 时才使用。
-        # 正常情况下 agentId 直接从 session_key 的第二段解析，无需单独配置。
-        "agent_id": "default",
-        "user_id": "open-xiaoai-bridge",
-        # 输入模式：
-        #   - "local_asr": 使用本地 VAD + SherpaASR
-        #   - "xiaoai_asr": 接管小爱原生 ASR 结果
-        "input_mode": "local_asr",
-        # session_key 采用 agent:<agentId>:<sessionId> 格式：
-        #   - 第二段 agentId 作为 X-Agent-Id 请求头发给服务端
-        #   - 第三段起为 sessionId，作为请求体 session_id 发给服务端
-        # 例如 agent:default:open-xiaoai-bridge -> agent=default, session=open-xiaoai-bridge
-        "session_key": "agent:default:open-xiaoai-bridge",
-        # QwenPaw 当前推荐使用后台任务接口：
-        # POST /api/console/chat/task -> GET /api/console/chat/task/{task_id}
-        "send_path": "/api/console/chat/task",
-        "task_status_path": "/api/console/chat/task/{task_id}",
-        # 认证（可选）：非空时默认使用 Authorization 认证头
-        "auth_token": "",
-        "response_timeout": 120,
-        "poll_interval": 0.5,
-        "tts_speed": 1.0,
-        "tts_speaker": "xiaoai",
-        "session_tts_speakers": {},
-        "exit_keywords": ["退出", "停止", "再见"],
-        "rule_prompt": "注意：将结果处理成纯文字版，不要返回任何 markdown 格式，也不要包含任何代码块，并将字数控制在300字以内",
-        "rule_prompt_for_skill": "注意：这条消息是主人通过小爱音箱发送给 QwenPaw 的，他看不到你回复的文字。字数控制在300字以内",
+
+        # 进入 Home Assistant 模式时的提示语
+        #
+        # 留空 = 不播放
+        "intro_prompt": "",
+
+        # 退出 Home Assistant 模式时的提示语
+        "exit_prompt": "好的，再见",
+
+        # 发给 Home Assistant Agent 前附加的规则
+        "rule_prompt": (
+            "注意：这是通过小爱音箱进行的语音对话。"
+            "请直接返回适合语音播报的纯文字内容，"
+            "不要使用 Markdown、代码块或特殊格式，"
+            "回答尽量简洁。"
+        ),
+
+        # 自定义状态
+        "state": {
+            # 是否维护 HA 状态实体
+            "enabled": False,
+
+            # 你的现有实体
+            "entity_id": "sensor.xiaomi_lx06_7e15_conversation",
+
+            # 是否更新用户最后一句话
+            "update_user_text": True,
+
+            # 是否更新 AI 最后回复
+            "update_response": True,
+
+            # 是否写入这些 attributes
+            "attributes": {
+                "mode": True,
+                "conversation_id": True,
+                "turn_count": True,
+                "last_user_text": True,
+                "last_response": True,
+                "source": True,
+                "wake_word": True,
+                "updated_at": True,
+            },
+        },
     },
 }
