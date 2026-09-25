@@ -37,15 +37,43 @@ class WakeupKeywordStartupTest(unittest.TestCase):
         self.assertTrue(should_run)
         self.assertEqual(reason, "")
 
+    def test_keyword_generation_enabled_for_hermes(self):
+        spec = importlib.util.spec_from_file_location(
+            "kws_keywords_for_hermes_test",
+            ROOT / "core/services/audio/kws/keywords.py",
+        )
+        keywords = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(keywords)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "XIAOZHI_ENABLE": "",
+                "OPENCLAW_ENABLE": "",
+                "OPENCLAW_ENABLED": "",
+                "OPENAI_ENABLE": "",
+                "HERMES_ENABLE": "1",
+                "QWENPAW_ENABLE": "",
+            },
+            clear=False,
+        ):
+            should_run, reason = keywords.should_generate_keywords()
+
+        self.assertTrue(should_run)
+        self.assertEqual(reason, "")
+
     def test_startup_entrypoints_prepare_keywords_for_openai(self):
         start_sh = (ROOT / "scripts/start.sh").read_text(encoding="utf8")
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf8")
 
         self.assertIn("OPENAI_ENABLE_VALUE", start_sh)
+        self.assertIn("HERMES_ENABLE_VALUE", start_sh)
         self.assertIn("QWENPAW_ENABLE_VALUE", start_sh)
         self.assertIn('[[ "$OPENAI_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
+        self.assertIn('[[ "$HERMES_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
         self.assertIn('[[ "$QWENPAW_ENABLE_VALUE" =~ ^(1|true|yes)$ ]]', start_sh)
         self.assertIn('${OPENAI_ENABLE:-}', dockerfile)
+        self.assertIn('${HERMES_ENABLE:-}', dockerfile)
         self.assertIn('${QWENPAW_ENABLE:-}', dockerfile)
         self.assertIn('python core/services/audio/kws/keywords.py', dockerfile)
 
@@ -160,6 +188,125 @@ class XiaoAIWakeupKeywordTest(unittest.TestCase):
                 ("你好小黑", "kws"),
             ],
         )
+
+
+class WakeupSessionCleanupTest(unittest.TestCase):
+    def test_reset_waits_for_cancelled_hermes_session_cleanup(self):
+        async def scenario():
+            wakeup_module = importlib.import_module("core.wakeup_session")
+            manager = wakeup_module.WakeupSessionManager.__new__(
+                wakeup_module.WakeupSessionManager
+            )
+            manager._openclaw_controller = None
+            manager._openclaw_task = None
+            manager._openai_controller = None
+            manager._openai_task = None
+            manager._qwenpaw_controller = None
+            manager._qwenpaw_task = None
+            manager._xiaozhi_future = None
+            manager._stop_device_playback = mock.AsyncMock()
+
+            cleanup_started = asyncio.Event()
+            allow_cleanup = asyncio.Event()
+            cleanup_finished = asyncio.Event()
+
+            async def old_hermes_session():
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    cleanup_started.set()
+                    await allow_cleanup.wait()
+                    cleanup_finished.set()
+                    raise
+
+            controller = mock.Mock()
+            controller.is_active.return_value = True
+            manager._hermes_controller = controller
+            manager._hermes_task = asyncio.create_task(
+                old_hermes_session()
+            )
+
+            xiaoai_stub = types.SimpleNamespace(
+                XiaoAI=types.SimpleNamespace(stop_conversation=mock.Mock())
+            )
+            with (
+                mock.patch.dict(
+                    sys.modules,
+                    {"core.xiaoai": xiaoai_stub},
+                ),
+                mock.patch(
+                    "core.ref.get_xiaozhi",
+                    return_value=None,
+                ),
+            ):
+                reset_task = asyncio.create_task(
+                    manager.reset_all_sessions()
+                )
+                await cleanup_started.wait()
+                self.assertFalse(reset_task.done())
+                self.assertFalse(cleanup_finished.is_set())
+                manager._stop_device_playback.assert_not_awaited()
+                allow_cleanup.set()
+                await reset_task
+
+            return manager, controller, cleanup_finished.is_set()
+
+        manager, controller, cleanup_finished = asyncio.run(scenario())
+        self.assertTrue(cleanup_finished)
+        controller.stop.assert_called_once_with()
+        manager._stop_device_playback.assert_awaited_once_with()
+
+    def test_old_hermes_finally_does_not_clear_new_session_owner(self):
+        async def scenario():
+            wakeup_module = importlib.import_module("core.wakeup_session")
+            manager = wakeup_module.WakeupSessionManager.__new__(
+                wakeup_module.WakeupSessionManager
+            )
+            manager._hermes_controller = None
+            manager._hermes_task = None
+
+            old_started = asyncio.Event()
+
+            class OldController:
+                async def start(self):
+                    old_started.set()
+                    await asyncio.Future()
+
+            hermes_conversation_stub = types.SimpleNamespace(
+                HermesConversationController=OldController
+            )
+            with (
+                mock.patch.dict(
+                    sys.modules,
+                    {
+                        "core.hermes_conversation": (
+                            hermes_conversation_stub
+                        )
+                    },
+                ),
+                mock.patch.object(
+                    wakeup_module,
+                    "get_kws",
+                    return_value=None,
+                ),
+            ):
+                old_wakeup = asyncio.create_task(
+                    manager._start_hermes_conversation()
+                )
+                await old_started.wait()
+                new_controller = object()
+                new_task = asyncio.create_task(asyncio.sleep(0))
+                manager._hermes_controller = new_controller
+                manager._hermes_task = new_task
+                old_wakeup.cancel()
+                await old_wakeup
+                await new_task
+
+            return manager, new_controller, new_task
+
+        manager, new_controller, new_task = asyncio.run(scenario())
+        self.assertIs(manager._hermes_controller, new_controller)
+        self.assertIs(manager._hermes_task, new_task)
 
 
 if __name__ == "__main__":
