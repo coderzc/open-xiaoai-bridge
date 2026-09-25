@@ -11,8 +11,6 @@ from typing import Any
 
 import aiohttp
 
-import open_xiaoai_server
-
 from core.utils.base import get_env
 from core.utils.config import ConfigManager
 from core.utils.logger import logger
@@ -34,6 +32,7 @@ class QwenPawManager:
     _task_status_path = "/api/console/chat/task/{task_id}"
     _response_timeout = 120
     _poll_interval = 0.5
+    _tts_provider: str | None = None
     _tts_speaker = None
     _session_tts_speakers: dict[str, str] = {}
     _tts_speed = 1.0
@@ -86,6 +85,12 @@ class QwenPawManager:
         )
         cls._response_timeout = int(config.get("response_timeout", 120))
         cls._poll_interval = max(0.1, float(config.get("poll_interval", 0.5)))
+        configured_provider = config.get("tts_provider")
+        cls._tts_provider = (
+            str(configured_provider).strip().lower()
+            if configured_provider
+            else None
+        )
         cls._tts_speaker = config.get("tts_speaker", None)
         cls._session_tts_speakers = (
             {
@@ -386,71 +391,15 @@ class QwenPawManager:
         tts_speaker: str | None = None,
         playback_token: int | None = None,
     ):
-        """Synthesize text and play it through the speaker."""
-        try:
-            from core.ref import get_speaker
+        """Synthesize text using the configured provider and play it."""
+        from core.services.tts.router import TTSRouter
 
-            resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
-            if resolved_tts_speaker == cls.XIAOAI_TTS_SPEAKER:
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-                return
-
-            from core.services.tts.doubao import DoubaoTTS
-
-            tts_config = ConfigManager.instance().get_app_config("tts.doubao", {})
-            app_id = tts_config.get("app_id")
-            access_key = tts_config.get("access_key")
-            if not app_id or not access_key:
-                logger.warning(
-                    "[QwenPaw] Doubao TTS credentials not configured, falling back to xiaoai native tts"
-                )
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-                return
-
-            speaker_id = resolved_tts_speaker or tts_config.get(
-                "default_speaker", "zh_female_xiaohe_uranus_bigtts"
-            )
-            tts = DoubaoTTS(
-                app_id=app_id,
-                access_key=access_key,
-                speaker=speaker_id,
-            )
-            resolved_format = tts.resolve_audio_format(text)
-            if tts_config.get("stream", False):
-                await open_xiaoai_server.tts_stream_play(
-                    text,
-                    app_id=app_id,
-                    access_key=access_key,
-                    resource_id=tts.resource_id,
-                    speaker=speaker_id,
-                    speed=cls._tts_speed,
-                    format=resolved_format,
-                    sample_rate=24000,
-                    playback_token=playback_token,
-                )
-            else:
-                await open_xiaoai_server.tts_play(
-                    text,
-                    app_id=app_id,
-                    access_key=access_key,
-                    resource_id=tts.resource_id,
-                    speaker=speaker_id,
-                    speed=cls._tts_speed,
-                    format=resolved_format,
-                    sample_rate=24000,
-                    playback_token=playback_token,
-                )
-        except Exception as exc:
-            logger.error(f"[QwenPaw] Error playing response with TTS: {exc}")
-            try:
-                from core.ref import get_speaker
-
-                speaker = get_speaker()
-                if speaker:
-                    await speaker.play(text=text, blocking=True)
-            except Exception as fallback_error:
-                logger.error(f"[QwenPaw] Fallback TTS also failed: {fallback_error}")
+        resolved_tts_speaker = tts_speaker or cls.get_tts_speaker_for_session_key()
+        await TTSRouter.play(
+            text,
+            configured_provider=cls._tts_provider,
+            tts_speaker=resolved_tts_speaker,
+            tts_speed=cls._tts_speed,
+            playback_token=playback_token,
+            log_prefix="QwenPaw",
+        )

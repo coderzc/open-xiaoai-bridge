@@ -9,7 +9,6 @@ import re
 from typing import Any
 
 import aiohttp
-import open_xiaoai_server
 
 from core.hermes_progress import HermesToolProgress
 from core.openai import OpenAIManager
@@ -50,6 +49,7 @@ class HermesManager(OpenAIManager):
     _timeout = 120
     _history_max_messages = 20
     _extra_body: dict[str, Any] = {}
+    _tts_provider: str | None = None
     _tts_speaker = None
     _session_tts_speakers: dict[str, str] = {}
     _tts_speed = 1.0
@@ -118,6 +118,12 @@ class HermesManager(OpenAIManager):
         cls._extra_body = config.get("extra_body", {})
         if not isinstance(cls._extra_body, dict):
             cls._extra_body = {}
+        configured_provider = config.get("tts_provider")
+        cls._tts_provider = (
+            str(configured_provider).strip().lower()
+            if configured_provider
+            else None
+        )
         cls._tts_speaker = config.get("tts_speaker", None)
         cls._session_tts_speakers = (
             {
@@ -510,90 +516,15 @@ class HermesManager(OpenAIManager):
         text: str,
         tts_speaker: str | None = None,
         playback_token: int | None = None,
-    ) -> bool:
-        """通过项目标准 Speaker/TTS 路径播放 Hermes 回复。"""
+    ) -> None:
+        """等待共享 Router 处理 TTS；沿用上游不返回播放结果的契约。"""
+        from core.services.tts.router import TTSRouter
 
-        from core.ref import get_speaker
-
-        try:
-            resolved_tts_speaker = (
-                tts_speaker
-                or cls.get_tts_speaker_for_session_key()
-            )
-            if resolved_tts_speaker == cls.XIAOAI_TTS_SPEAKER:
-                speaker = get_speaker()
-                if not speaker:
-                    logger.error(
-                        "Speaker not available for native TTS",
-                        module="Hermes",
-                    )
-                    return False
-                return bool(await speaker.play(text=text, blocking=True))
-
-            from core.services.tts.doubao import DoubaoTTS
-
-            tts_config = ConfigManager.instance().get_app_config(
-                "tts.doubao",
-                {},
-            )
-            app_id = tts_config.get("app_id")
-            access_key = tts_config.get("access_key")
-            if not app_id or not access_key:
-                logger.warning(
-                    "Doubao TTS credentials not configured; "
-                    "using native XiaoAI TTS",
-                    module="Hermes",
-                )
-                speaker = get_speaker()
-                return (
-                    bool(await speaker.play(text=text, blocking=True))
-                    if speaker
-                    else False
-                )
-
-            speaker_id = resolved_tts_speaker or tts_config.get(
-                "default_speaker",
-                "zh_female_xiaohe_uranus_bigtts",
-            )
-            tts = DoubaoTTS(
-                app_id=app_id,
-                access_key=access_key,
-                speaker=speaker_id,
-            )
-            resolved_format = tts.resolve_audio_format(text)
-            if tts_config.get("stream", False):
-                await open_xiaoai_server.tts_stream_play(
-                    text,
-                    app_id=app_id,
-                    access_key=access_key,
-                    resource_id=tts.resource_id,
-                    speaker=speaker_id,
-                    speed=cls._tts_speed,
-                    format=resolved_format,
-                    sample_rate=24000,
-                    playback_token=playback_token,
-                )
-            else:
-                await open_xiaoai_server.tts_play(
-                    text,
-                    app_id=app_id,
-                    access_key=access_key,
-                    resource_id=tts.resource_id,
-                    speaker=speaker_id,
-                    speed=cls._tts_speed,
-                    format=resolved_format,
-                    sample_rate=24000,
-                    playback_token=playback_token,
-                )
-            return True
-        except Exception as exc:
-            logger.error(
-                f"TTS playback failed: {type(exc).__name__}: {exc}",
-                module="Hermes",
-            )
-            speaker = get_speaker()
-            return (
-                bool(await speaker.play(text=text, blocking=True))
-                if speaker
-                else False
-            )
+        await TTSRouter.play(
+            text,
+            configured_provider=cls._tts_provider,
+            tts_speaker=tts_speaker or cls.get_tts_speaker_for_session_key(),
+            tts_speed=cls._tts_speed,
+            playback_token=playback_token,
+            log_prefix="Hermes",
+        )

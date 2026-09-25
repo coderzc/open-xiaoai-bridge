@@ -104,17 +104,17 @@ class HermesConversationController(StreamingConversationController):
         )
 
     async def _play_tts(self, text: str):
-        """播放一条排队中的 Hermes 语音，失败时不静默吞掉异常。"""
+        """等待一条语音的 Router 调用结束，传播其未处理的异常和取消。"""
 
         self._playback_token = open_xiaoai_server.begin_playback_session()
         try:
-            played = await self.backend._play_response_with_tts(
+            # 上游 Router 返回 None，不是播放成功回执，也不能判为失败。
+            # provider 回退由 Router 负责，此处不重播或重新请求 Agent。
+            await self.backend._play_response_with_tts(
                 text,
                 tts_speaker=self.backend.get_tts_speaker_for_session_key(),
                 playback_token=self._playback_token,
             )
-            if not played:
-                raise RuntimeError("Hermes TTS playback did not complete")
         except Exception as exc:
             logger.error(
                 f"TTS playback error: {type(exc).__name__}: {exc}",

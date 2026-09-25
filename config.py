@@ -386,6 +386,8 @@ APP_CONFIG = {
             "max_messages": 2,
         },
         "tts_speed": 1.0,
+        # 可选 xiaoai / doubao / openai / mlx_audio；缺省保留 tts_speaker 选择规则。
+        # "tts_provider": "mlx_audio",  # 共享 tts.mlx_audio 配置示例见 README
         "tts_speaker": "xiaoai",
         "session_tts_speakers": {},
         "exit_keywords": ["退出", "停止", "再见"],

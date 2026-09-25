@@ -34,6 +34,7 @@ open-xiaoai-bridge/
 │   ├── services/
 │   │   ├── speaker.py             # SpeakerManager 音箱硬件控制
 │   │   ├── api_server.py          # HTTP REST API（aiohttp）
+│   │   ├── tts/router.py           # 统一 TTS provider 路由与播放
 │   │   ├── audio/
 │   │   │   ├── stream.py          # GlobalStream 全局音频流（多路输入广播）
 │   │   │   ├── codec.py           # 音频编解码
@@ -41,6 +42,8 @@ open-xiaoai-bridge/
 │   │   │   ├── kws/sherpa.py      # Sherpa KWS 关键词唤醒
 │   │   │   └── asr/sherpa.py      # Sherpa ASR 离线语音识别（SenseVoice）
 │   │   ├── tts/doubao.py          # 豆包 TTS 客户端（火山引擎）
+│   │   ├── tts/openai.py           # OpenAI-compatible TTS 协议客户端
+│   │   ├── tts/mlx_audio.py        # MLX-Audio TTS provider（复用 OpenAI 协议客户端）
 │   │   └── protocols/
 │   │       ├── websocket_protocol.py  # 小智 WebSocket 协议实现
 │   │       └── typing.py              # 协议类型定义
@@ -127,7 +130,7 @@ OpenClaw 网关客户端，管理 WebSocket 连接、消息分发、自动重连
 - WebSocket ping/pong + tick 事件监控连接健康
 - 指数退避重连（初始 1s，最大 60s）
 - 请求 ID 映射 `_pending: dict[str, asyncio.Future]` 追踪响应
-- TTS 播放：`tts_speaker` 为 `"xiaoai"` 时使用小爱原生 TTS，否则使用豆包 TTS（支持流式）
+- TTS 播放：通过共享 TTS Router 选择 `xiaoai`、`doubao`、`openai` 或 `mlx_audio` provider；缺省时保持 `tts_speaker` 的旧选择逻辑
 - Rust TTS 播放使用单一活动 `playback_token`：开始新的 Rust TTS 会使旧 token 失效；`stop_tts_playback(token)` 只应由持有该 token 的调用方定向停止自己的播放
 
 **连接参数限制**:
@@ -177,6 +180,8 @@ Hermes 是独立后端，拥有自己的 `HERMES_ENABLE`、`hermes` 配置、Ses
 - 最终文本开始到达后丢弃尚未播放的进度；已经开始播放的进度不被粗暴打断
 - 流式传输失败时不重新提交同一个 Agent turn；交付已收到的正文并提示用户重试
 - Bridge 仅按显式 `response_mode` 选择 streaming 或 complete，不根据模型名、地址或失败结果自动猜测和切换模式
+- TTS 沿用上游共享 Router 的 `None` 返回契约，按句等待调用结束；不将其判为失败或包装成成功回执。provider 回退只由 Router 负责，不在 Hermes 重播或重提 Agent 请求
+- Router 内部处理的播放失败不向 Hermes 返回状态；未处理的异常和任务取消继续传播。豆包透传 controller 的 `playback_token`，OpenAI / MLX 文件播放仍由上游底层另建 token，不能宣称同样具有按 controller token 定向取消的保证
 
 ### WakeupSessionManager (core/wakeup_session.py)
 
@@ -253,7 +258,7 @@ HTTP REST API 服务器（aiohttp），端口可配（默认 9092）。
 | VAD | `audio/vad/silero.py` | Silero ONNX 语音活动检测 |
 | KWS | `audio/kws/sherpa.py` | Sherpa ONNX 关键词唤醒（信心度 2.0，阈值 0.2） |
 | ASR | `audio/asr/sherpa.py` | Sherpa SenseVoice 离线语音识别（懒加载，INT8 量化） |
-| TTS | `tts/doubao.py` | 豆包 TTS（流式/一次性，PCM/MP3 自适应） |
+| TTS | `tts/openai.py`, `tts/mlx_audio.py`, `tts/doubao.py` | OpenAI-compatible TTS、MLX-Audio 与豆包 TTS（一次性/本地音频播放） |
 
 ### Rust 原生扩展 (native/)
 

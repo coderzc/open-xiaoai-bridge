@@ -927,7 +927,6 @@ class HermesStreamingTest(unittest.TestCase):
                 calls.append(text)
                 playback_started.set()
                 await release_playback.wait()
-                return True
 
             self.controller.config.values["hermes"]["input_mode"] = (
                 "local_asr"
@@ -965,10 +964,10 @@ class HermesStreamingTest(unittest.TestCase):
 
         self.assertEqual(["完整回答"], asyncio.run(scenario()))
 
-    def test_failed_tts_does_not_retry_native_playback(self):
+    def test_router_none_is_not_treated_as_playback_failure(self):
         backend = types.SimpleNamespace(
             _play_response_with_tts=mock.AsyncMock(
-                return_value=False
+                return_value=None
             ),
             get_tts_speaker_for_session_key=mock.Mock(
                 return_value="xiaoai"
@@ -976,14 +975,28 @@ class HermesStreamingTest(unittest.TestCase):
         )
         self.controller.backend = backend
 
+        self.assertIsNone(asyncio.run(self.controller._play_tts("等待调用结束")))
+        backend._play_response_with_tts.assert_awaited_once()
+        self.assertIsNone(self.controller._playback_token)
+
+    def test_unhandled_tts_error_propagates_without_retry(self):
+        backend = types.SimpleNamespace(
+            _play_response_with_tts=mock.AsyncMock(
+                side_effect=RuntimeError("unhandled TTS error")
+            ),
+            get_tts_speaker_for_session_key=mock.Mock(return_value="xiaoai"),
+        )
+        self.controller.backend = backend
+
         async def scenario():
             with self.assertRaisesRegex(
                 RuntimeError,
-                "did not complete",
+                "unhandled TTS error",
             ):
                 await self.controller._play_tts("播放失败")
 
         asyncio.run(scenario())
+        backend._play_response_with_tts.assert_awaited_once()
         self.assertIsNone(self.controller._playback_token)
 
 

@@ -360,6 +360,43 @@ class HermesBackendTest(unittest.TestCase):
         self.assertEqual("streaming", self.hermes.get_response_mode())
         warning.assert_called_once()
 
+    def test_tts_provider_is_independent_and_removal_restores_legacy_rule(self):
+        config = _Config({"hermes": {}, "openai": {"tts_provider": "openai"}})
+        self.openai._tts_provider = "openai"
+        self.assertIn("_tts_provider", self.hermes.__dict__)
+        self.hermes._reload_listener_registered = True
+        with mock.patch.object(self.hermes_module.ConfigManager, "instance", return_value=config):
+            for provider in ("xiaoai", "doubao", "openai", "mlx_audio"):
+                config.values["hermes"]["tts_provider"] = " " + provider.upper() + " "
+                self.hermes.reload_from_config(enabled=True)
+                self.assertEqual(provider, self.hermes._tts_provider)
+                self.assertEqual("openai", self.openai._tts_provider)
+            del config.values["hermes"]["tts_provider"]
+            self.hermes.reload_from_config(enabled=True)
+        self.assertIsNone(self.hermes._tts_provider)
+        self.assertEqual("xiaoai", self.hermes._resolve_tts_provider("xiaoai"))
+        self.assertEqual("doubao", self.hermes._resolve_tts_provider("voice"))
+
+    def test_hermes_delegates_voice_token_and_void_contract_to_router(self):
+        from core.services.tts.router import TTSRouter
+
+        self.hermes._tts_speaker = "default-voice"
+        self.hermes._session_key = "speaker"
+        self.hermes._session_tts_speakers = {"speaker": "session-voice"}
+        self.hermes._tts_speed = 1.1
+        for provider in ("xiaoai", "doubao", "openai", "mlx_audio"):
+            self.hermes._tts_provider = provider
+            for override, voice in ((None, "session-voice"), ("explicit", "explicit")):
+                with mock.patch.object(TTSRouter, "play", new=mock.AsyncMock(return_value=None)) as play:
+                    actual = asyncio.run(self.hermes._play_response_with_tts(
+                        "回答", tts_speaker=override, playback_token=17,
+                    ))
+                self.assertIsNone(actual)
+                play.assert_awaited_once_with(
+                    "回答", configured_provider=provider, tts_speaker=voice,
+                    tts_speed=1.1, playback_token=17, log_prefix="Hermes",
+                )
+
     def test_response_mode_does_not_change_session_scope_or_native_id(self):
         self.hermes._session_key = "speaker"
         self.hermes._profile = ""
