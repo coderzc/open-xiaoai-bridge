@@ -101,11 +101,19 @@ def main():
         )
         
         if result.get("success"):
-            print(f"🎵 火山 TTS 播放成功")
+            if args.blocking:
+                print("🎵 火山 TTS 播放完成")
+                print("RESULT success=true completed=true")
+            else:
+                print("🎵 Bridge 已接受火山 TTS 后台播放请求")
+                print("RESULT success=true accepted=true")
         else:
-            print(f"⚠️ 播放可能失败: {result}")
+            print(f"❌ 播放失败: {result}", file=sys.stderr)
+            print("RESULT success=false", file=sys.stderr)
+            sys.exit(1)
     except Exception as e:
         print(f"❌ 错误: {e}")
+        print("RESULT success=false", file=sys.stderr)
         sys.exit(1)
 
 

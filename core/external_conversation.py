@@ -236,22 +236,19 @@ class ExternalConversationController:
                 logger.info(f"Exit keyword: {kw}", module=self.LOG_MODULE)
                 return "exit"
 
-        # 4. Send to backend and wait for response
-        full_text = text
-        if self.backend._rule_prompt:
-            full_text = text + "\n" + self.backend._rule_prompt
-        # 先发出请求（不阻塞等回复），立即播"咻"给用户即时反馈，再等回复
-        # 注意：直接用 _send_and_track 而非 send(wait_response=False)，
-        # 后者会立即清掉 Future，导致后续 _wait_response 拿不到回复
-        run_id = await self.backend._send_and_track(full_text)
-        await self._play_send_sound()
-        response = await self.backend._wait_response(run_id) if run_id else None
+        # 4. 发送到后端并等待回复；支持流式的子类可覆盖这个钩子，
+        #    不改变现有稳定后端的默认路径。
+        response, already_played = await self._request_backend_turn(
+            text,
+            play_send_sound=True,
+        )
         if response is None:
             logger.warning(f"No response from {self.BACKEND_NAME}", module=self.LOG_MODULE)
-            speaker = get_speaker()
-            if speaker:
-                await speaker.play(text="抱歉，我没有收到回复")
-            return "continue"
+            if not already_played:
+                speaker = get_speaker()
+                if speaker:
+                    await speaker.play(text="抱歉，我没有收到回复")
+                return "continue"
 
         # 5. Stop recording → TTS → Notify → Start recording → Wait for silence
         #    Mic is off during TTS and notify, so no echo is captured.
@@ -259,8 +256,9 @@ class ExternalConversationController:
         #    enough for TTS echo to fade. After starting recording, we wait
         #    for silence to ensure any residual echo or buffered audio clears.
         #    VAD.resume() resets all state, so speech detection starts clean.
-        await self._stop_recording()
-        await self._play_tts(str(response))
+        if not already_played:
+            await self._stop_recording()
+            await self._play_tts(str(response))
         await self._play_notify()
         await self._start_recording()
         logger.debug("Recording started, waiting for silence...", module=self.LOG_MODULE)
@@ -281,23 +279,59 @@ class ExternalConversationController:
                 logger.info(f"Exit keyword: {kw}", module=self.LOG_MODULE)
                 return "exit"
 
-        full_text = text
-        if self.backend._rule_prompt:
-            full_text = text + "\n" + self.backend._rule_prompt
-        response = await self.backend.send(full_text, wait_response=True)
+        response, already_played = await self._request_backend_turn(
+            text,
+            play_send_sound=False,
+        )
         if response is None:
             logger.warning(f"No response from {self.BACKEND_NAME}", module=self.LOG_MODULE)
-            speaker = get_speaker()
-            if speaker:
-                await speaker.play(text="抱歉，我没有收到回复")
-            return "continue"
+            if not already_played:
+                speaker = get_speaker()
+                if speaker:
+                    await speaker.play(text="抱歉，我没有收到回复")
+                return "continue"
 
-        await self._stop_recording()
-        await self._play_tts(str(response))
+        if not already_played:
+            await self._stop_recording()
+            await self._play_tts(str(response))
         await self._play_notify()
         await self._start_recording()
         logger.debug("Ready for next XiaoAI native ASR round", module=self.LOG_MODULE)
         return "continue"
+
+    async def _request_backend_turn(
+        self,
+        text: str,
+        *,
+        play_send_sound: bool,
+    ) -> tuple[str | None, bool]:
+        """请求一轮后端对话，同时保持原有非流式行为。
+
+        返回 ``(response, already_played)``。流式后端可以覆盖该方法，在
+        完整回复到达前提前交付语音。
+        """
+
+        full_text = text
+        if self.backend._rule_prompt:
+            full_text = text + "\n" + self.backend._rule_prompt
+
+        if play_send_sound:
+            # 本地 ASR 先发出请求（不阻塞等回复），再播放发送提示音。
+            # 直接使用 _send_and_track，避免后台 waiter 抢先清理 Future。
+            run_id = await self.backend._send_and_track(full_text)
+            await self._play_send_sound()
+            response = (
+                await self.backend._wait_response(run_id)
+                if run_id
+                else None
+            )
+        else:
+            # XiaoAI ASR 保持原有 send(wait_response=True) 清理语义。
+            response = await self.backend.send(
+                full_text,
+                wait_response=True,
+            )
+        return response, False
 
     # ---- VAD integration ----
 

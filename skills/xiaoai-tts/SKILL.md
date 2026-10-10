@@ -1,6 +1,12 @@
 ---
 name: xiaoai-tts
 description: Control Xiaoai speaker via OpenXiaoAI Voice API for high-quality TTS playback. Use when the user wants to play voice notifications, announcements, or TTS through the Xiaoai speaker using the OpenXiaoAI HTTP API. Supports Doubao (ByteDance) TTS with emotions, voice types, and speed control. Triggers on queries like "小爱播报", "语音播报", "让小爱说", "读出来", "播报"， "xiaoai-tts"，"tts", "TTS", "小爱音箱语音播报".
+version: 1.1.0
+required_environment_variables:
+  - name: OPENXIAOAI_BASE_URL
+    prompt: OpenXiaoAI Bridge base URL
+    help: Example http://192.168.x.x:9092
+    required_for: XiaoAI playback HTTP API
 ---
 
 # XiaoAI TTS
@@ -16,6 +22,22 @@ OPENXIAOAI_BASE_URL="http://192.168.x.x:9092"  # OpenXiaoAI 服务地址
 ```
 
 ## 使用方法
+
+Hermes Agent 会把下面的 `${HERMES_SKILL_DIR}` 替换为本 Skill 的绝对路径，
+因此无需把工具额外安装到 `PATH`。OpenClaw 等已将工具安装到 `PATH` 的宿主，
+继续使用原来的 `xiaoai-tts` 命令即可。
+
+Hermes Agent 调用格式：
+
+```bash
+"${HERMES_SKILL_DIR}/tools/xiaoai-tts" health
+"${HERMES_SKILL_DIR}/tools/xiaoai-tts" tts "你好，我是小爱语音助手" --blocking
+```
+
+主动播报必须使用 `--blocking`。命令退出码 `0` 且输出
+`RESULT success=true completed=true` 才表示播放已完成；非阻塞调用只会返回
+`RESULT success=true accepted=true`，只能表述为“已接受请求”，不能声称已经播报。
+退出码非 `0` 或 `RESULT success=false` 表示失败，不得向用户声称已经播报。
 
 ```bash
 # 语音播报（优先 Doubao TTS，失败自动回退小爱自带 TTS）
@@ -114,4 +136,3 @@ xiaoai-tts tts "你好，我是你的专属语音助手" -s S_xxxxxxxx
 
 - Base URL: `http://{host}:9092`
 - Content-Type: `application/json`
-```
