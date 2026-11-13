@@ -12,10 +12,39 @@ use pyo3::types::PyString;
 use pyo3::Python;
 use serde_json::json;
 use std::env;
+use std::sync::LazyLock;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{oneshot, Mutex};
+use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
 use tokio_tungstenite::{accept_async, accept_hdr_async};
 
 pub struct AppServer;
+
+struct ActiveConnection {
+    addr: std::net::SocketAddr,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+impl ActiveConnection {
+    async fn stop(mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+
+        if timeout(Duration::from_secs(2), &mut self.task)
+            .await
+            .is_err()
+        {
+            self.task.abort();
+            let _ = self.task.await;
+        }
+    }
+}
+
+static ACTIVE_CONNECTION: LazyLock<Mutex<Option<ActiveConnection>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// Check if audio input is enabled via environment variable.
 /// Supports: "true"/"false", "1"/"0", "yes"/"no", etc.
@@ -61,7 +90,9 @@ impl AppServer {
     pub async fn connect(stream: TcpStream) -> Result<WsStream, AppError> {
         let expected_token = std::env::var("OPEN_XIAOAI_TOKEN").unwrap_or_default();
         if !expected_token.is_empty() {
-            use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+            use tokio_tungstenite::tungstenite::handshake::server::{
+                ErrorResponse, Request, Response,
+            };
             let ws_stream = accept_hdr_async(stream, move |req: &Request, response: Response| {
                 let auth = req
                     .headers()
@@ -69,10 +100,11 @@ impl AppServer {
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("");
                 if auth != format!("Bearer {}", expected_token) {
-                    let error: ErrorResponse = tokio_tungstenite::tungstenite::http::Response::builder()
-                        .status(401)
-                        .body(Some("Unauthorized".to_string()))
-                        .unwrap();
+                    let error: ErrorResponse =
+                        tokio_tungstenite::tungstenite::http::Response::builder()
+                            .status(401)
+                            .body(Some("Unauthorized".to_string()))
+                            .unwrap();
                     return Err(error);
                 }
                 Ok(response)
@@ -92,12 +124,33 @@ impl AppServer {
             .expect(format!("[AppServer] ❌ 绑定地址失败: {}", &addr).as_str());
         crate::pylog!("[AppServer] ✅ 已启动: {:?}", addr);
         while let Ok((stream, addr)) = listener.accept().await {
-            // 同一时刻只处理一个连接
-            AppServer::handle_connection(stream, addr).await;
+            let previous = {
+                let mut active_connection = ACTIVE_CONNECTION.lock().await;
+                active_connection.take()
+            };
+            if let Some(previous) = previous {
+                crate::pylog!("[AppServer] ⚠️ 发现新连接，关闭旧连接: {}", previous.addr);
+                previous.stop().await;
+            }
+
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+            let task = tokio::spawn(async move {
+                AppServer::handle_connection(stream, addr, shutdown_rx).await;
+            });
+            let mut active_connection = ACTIVE_CONNECTION.lock().await;
+            *active_connection = Some(ActiveConnection {
+                addr,
+                shutdown_tx: Some(shutdown_tx),
+                task,
+            });
         }
     }
 
-    async fn handle_connection(stream: TcpStream, addr: std::net::SocketAddr) {
+    async fn handle_connection(
+        stream: TcpStream,
+        addr: std::net::SocketAddr,
+        mut shutdown_rx: oneshot::Receiver<()>,
+    ) {
         let ws_stream = match AppServer::connect(stream).await {
             Ok(ws_stream) => ws_stream,
             Err(e) => {
@@ -112,8 +165,15 @@ impl AppServer {
         };
         crate::pylog!("[AppServer] ✅ 已连接: {:?}", addr);
         AppServer::init(ws_stream).await;
-        if let Err(e) = MessageManager::instance().process_messages().await {
-            crate::pylog!("[AppServer] ❌ 消息处理异常: {}", e);
+        tokio::select! {
+            result = MessageManager::instance().process_messages() => {
+                if let Err(e) = result {
+                    crate::pylog!("[AppServer] ❌ 消息处理异常: {}", e);
+                }
+            }
+            _ = &mut shutdown_rx => {
+                crate::pylog!("[AppServer] ⚠️ 连接被新会话抢占: {}", addr);
+            }
         }
         AppServer::dispose().await;
         crate::pylog!("[AppServer] ❌ 已断开连接");
