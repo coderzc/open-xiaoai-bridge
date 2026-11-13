@@ -82,9 +82,7 @@ fn run_shell(py: Python, script: String, timeout_millis: f64) -> PyResult<Bound<
 fn stop_playing(py: Python) -> PyResult<Bound<PyAny>> {
     PLAYER_READY.store(false, Ordering::SeqCst);
     pyo3_async_runtimes::tokio::future_into_py(py, async {
-        let _ = RPC::instance()
-            .call_remote("stop_play", None, None)
-            .await;
+        let _ = RPC::instance().call_remote("stop_play", None, None).await;
         Ok(())
     })
 }
@@ -131,8 +129,6 @@ fn start_recording(py: Python) -> PyResult<Bound<PyAny>> {
         Ok(())
     })
 }
-
-
 
 #[pymodule]
 fn open_xiaoai_server(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {

@@ -227,3 +227,53 @@ async fn on_event(event: Event) -> Result<(), AppError> {
     PythonManager::instance().call_fn("on_event", Some(data))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ActiveConnection;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+    use tokio::time::{sleep, Duration, Instant};
+
+    fn loopback_addr(port: u16) -> std::net::SocketAddr {
+        std::net::SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    #[tokio::test]
+    async fn active_connection_stop_gracefully_joins_task() {
+        let exited = Arc::new(AtomicBool::new(false));
+        let exited_clone = exited.clone();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let task = tokio::spawn(async move {
+            let _ = shutdown_rx.await;
+            exited_clone.store(true, Ordering::SeqCst);
+        });
+
+        let connection = ActiveConnection {
+            addr: loopback_addr(1),
+            shutdown_tx: Some(shutdown_tx),
+            task,
+        };
+        connection.stop().await;
+
+        assert!(exited.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn active_connection_stop_aborts_hung_task_after_timeout() {
+        let task = tokio::spawn(async move {
+            sleep(Duration::from_secs(60)).await;
+        });
+
+        let connection = ActiveConnection {
+            addr: loopback_addr(2),
+            shutdown_tx: None,
+            task,
+        };
+        let start = Instant::now();
+        connection.stop().await;
+
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+}
